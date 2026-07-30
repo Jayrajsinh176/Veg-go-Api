@@ -1,0 +1,29 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class RiderWalletTransaction extends Model
+{
+    protected $fillable = [
+        'rider_id',
+        'type',
+        'amount',
+        'balance_after',
+        'title',
+        'description',
+        'reference_type',
+        'reference_id',
+    ];
+
+    protected $casts = [
+        'amount' => 'decimal:2',
+        'balance_after' => 'decimal:2',
+    ];
+
+    public function rider()
+    {
+        return $this->belongsTo(Rider::class);
+    }
+}
