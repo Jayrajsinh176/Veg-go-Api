@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Restaurant;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use App\Models\RestaurantCategory;
 
 class RestaurantRevenueController extends Controller
 {
@@ -219,34 +220,85 @@ public function breakdown(Request $request)
                 'period' => 'daily',
                 'breakdown' => [
                     [
-                        'title' => 'Breakfast',
+                        'title' => '09 AM',
                         'revenue' => 0,
                         'orders' => 0,
                     ],
                     [
-                        'title' => 'Lunch',
+                        'title' => '11 AM',
                         'revenue' => 0,
                         'orders' => 0,
                     ],
                     [
-                        'title' => 'Snacks',
+                        'title' => '01 PM',
                         'revenue' => 0,
                         'orders' => 0,
                     ],
                     [
-                        'title' => 'Dinner',
+                        'title' => '03 PM',
+                        'revenue' => 0,
+                        'orders' => 0,
+                    ],
+                    [
+                        'title' => '05 PM',
+                        'revenue' => 0,
+                        'orders' => 0,
+                    ],
+                    [
+                        'title' => '07 PM',
+                        'revenue' => 0,
+                        'orders' => 0,
+                    ],
+                    [
+                        'title' => '09 PM',
                         'revenue' => 0,
                         'orders' => 0,
                     ],
                 ],
                 'currency' => 'INR',
             ];
+
+            break;
     }
 
     return response()->json([
         'success' => true,
         'message' => 'Revenue breakdown fetched successfully.',
         'data' => $data,
+    ]);
+}
+
+public function categories(Request $request)
+{
+    $restaurant = auth()->user();
+
+    $type = $request->query('type', 'daily');
+
+    $categories = RestaurantCategory::where('restaurant_id', $restaurant->id)
+        ->where('is_active', true)
+        ->orderBy('display_order')
+        ->get();
+
+    $data = $categories->map(function ($category) {
+
+        return [
+            'category_id' => $category->id,
+            'category_name' => $category->name,
+            'revenue' => 0,
+            'orders' => 0,
+            'percentage' => 0,
+        ];
+
+    });
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Revenue categories fetched successfully.',
+        'data' => [
+            'period' => $type,
+            'categories' => $data,
+            'currency' => 'INR',
+        ],
     ]);
 }
 

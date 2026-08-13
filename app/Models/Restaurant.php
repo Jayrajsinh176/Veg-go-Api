@@ -10,18 +10,17 @@ class Restaurant extends Authenticatable
 {
     use HasApiTokens, Notifiable;
 
-   protected $fillable = [
+  protected $fillable = [
     'mobile',
-
     'owner_name',
     'restaurant_name',
     'email',
     'whatsapp_number',
     'is_whatsapp_same',
     'same_time_all_days',
-
     'status',
     'is_online',
+    'wallet_balance',
     'onboarding_step',
     'is_profile_completed',
 ];
@@ -34,6 +33,7 @@ protected $casts = [
     'is_whatsapp_same' => 'boolean',
     'same_time_all_days' => 'boolean',
     'is_profile_completed' => 'boolean',
+       'wallet_balance' => 'decimal:2',
     'is_online' => 'boolean',
 ];
 
@@ -69,6 +69,26 @@ public function menuItems()
 public function partnerContract()
 {
     return $this->hasOne(RestaurantPartnerContract::class);
+}
+
+public function reviews()
+{
+    return $this->hasMany(RestaurantReview::class);
+}
+
+public function orders()
+{
+    return $this->hasMany(RestaurantOrder::class);
+}
+
+public function walletTransactions()
+{
+    return $this->hasMany(RestaurantWalletTransaction::class);
+}
+
+public function settings()
+{
+    return $this->hasOne(RestaurantSetting::class);
 }
 
 }

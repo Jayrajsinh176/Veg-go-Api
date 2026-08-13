@@ -67,6 +67,14 @@ $otpRecord->delete();
     // Check if Restaurant Already Exists
     $restaurant = Restaurant::where('mobile', $request->mobile)->first();
 
+    // Block deactivated restaurant accounts
+if ($restaurant && $restaurant->status === 'inactive') {
+    return response()->json([
+        'success' => false,
+        'message' => 'Your restaurant account has been deactivated.',
+    ], 403);
+}
+
     // If Restaurant Does Not Exist, Create New Restaurant
     if (!$restaurant) {
 

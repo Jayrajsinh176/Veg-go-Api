@@ -120,4 +120,34 @@ public function destroy(Request $request, RestaurantCategory $category)
         'message' => 'Category deleted successfully.',
     ]);
 }
+
+/**
+ * Toggle Category Status
+ */
+public function toggleStatus(Request $request, RestaurantCategory $category)
+{
+    $restaurant = $request->user();
+
+    if ($category->restaurant_id != $restaurant->id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Category not found.',
+        ], 404);
+    }
+
+    $category->update([
+        'is_active' => !$category->is_active,
+    ]);
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Category status updated successfully.',
+        'data' => [
+            'id' => $category->id,
+            'name' => $category->name,
+            'is_active' => (bool) $category->is_active,
+        ],
+    ]);
+}
+
 }

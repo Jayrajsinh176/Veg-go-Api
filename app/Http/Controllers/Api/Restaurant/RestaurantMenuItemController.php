@@ -221,6 +221,36 @@ public function toggleAvailability(Request $request, RestaurantMenuItem $menuIte
 }
 
 /**
+ * Duplicate Menu Item
+ */
+public function duplicate(Request $request, RestaurantMenuItem $menuItem)
+{
+    $restaurant = $request->user();
+
+    if ($menuItem->restaurant_id != $restaurant->id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Menu item not found.',
+        ], 404);
+    }
+
+  $newItem = $menuItem->replicate();
+
+$newItem->name = $menuItem->name . ' (Copy)';
+$newItem->is_active = true;
+$newItem->created_at = now();
+$newItem->updated_at = now();
+
+$newItem->save();
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Menu item duplicated successfully.',
+        'data' => $newItem,
+    ]);
+}
+
+/**
  * Category Details
  */
 public function categoryItems(Request $request, RestaurantCategory $category)
@@ -240,6 +270,10 @@ public function categoryItems(Request $request, RestaurantCategory $category)
         ->orderBy('name')
         ->get();
 
+        $totalItems = $items->count();
+$availableItems = $items->where('is_available', true)->count();
+$unavailableItems = $totalItems - $availableItems;
+
     return response()->json([
         'success' => true,
         'message' => 'Category items fetched successfully.',
@@ -248,12 +282,29 @@ public function categoryItems(Request $request, RestaurantCategory $category)
                 'id' => $category->id,
                 'name' => $category->name,
             ],
-            'summary' => [
-                'total_items' => $items->count(),
-                'veg_items' => $items->count(),
-                'with_description' => $items->whereNotNull('description')->count(),
-            ],
-            'items' => $items,
+         'summary' => [
+    'total_items' => $totalItems,
+    'available_items' => $availableItems,
+    'unavailable_items' => $unavailableItems,
+    'availability_percentage' => $totalItems > 0
+        ? round(($availableItems / $totalItems) * 100)
+        : 0,
+],
+            'items' => $items->map(function ($item) {
+
+    return [
+        'id' => $item->id,
+        'name' => $item->name,
+        'description' => $item->description,
+        'price' => $item->price,
+        'discount_price' => $item->discount_price,
+        'image' => $item->image,
+        'is_available' => (bool) $item->is_available,
+        'is_recommended' => (bool) $item->is_recommended,
+        'is_veg' => true,
+    ];
+
+}),
         ],
     ]);
 }
@@ -295,6 +346,40 @@ public function reviewMenu(Request $request)
                 'items_with_photos' => $itemsWithPhotos,
             ],
             'categories' => $categories,
+        ],
+    ]);
+}
+
+/**
+ * Get Single Menu Item
+ */
+public function show(Request $request, RestaurantMenuItem $menuItem)
+{
+    $restaurant = $request->user();
+
+    if (
+        $menuItem->restaurant_id != $restaurant->id ||
+        !$menuItem->is_active
+    ) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Menu item not found.',
+        ], 404);
+    }
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Menu item fetched successfully.',
+        'data' => [
+            'id' => $menuItem->id,
+            'category_id' => $menuItem->category_id,
+            'name' => $menuItem->name,
+            'description' => $menuItem->description,
+            'price' => $menuItem->price,
+            'discount_price' => $menuItem->discount_price,
+            'image' => $menuItem->image,
+            'is_available' => (bool) $menuItem->is_available,
+            'is_recommended' => (bool) $menuItem->is_recommended,
         ],
     ]);
 }

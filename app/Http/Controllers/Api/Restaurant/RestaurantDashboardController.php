@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Restaurant;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use App\Models\RestaurantOrder;
 
 class RestaurantDashboardController extends Controller
 {
@@ -43,17 +44,25 @@ class RestaurantDashboardController extends Controller
 
     $restaurant = $request->user();
 
-    // Restaurant must be approved before going online
-    if ($restaurant->status !== 'approved') {
-      return response()->json([
-    'success' => false,
-    'message' => 'Your restaurant is not approved yet.',
-    'data' => [
-        'status' => $restaurant->status,
-        'is_online' => $restaurant->is_online,
-    ],
-], 403);
+// Restaurant cannot go offline if active orders exist
+if (!$request->is_online) {
+
+    $hasActiveOrders = RestaurantOrder::where('restaurant_id', $restaurant->id)
+        ->whereIn('order_status', [
+            'pending',
+            'accepted',
+            'preparing',
+            'ready_for_pickup',
+        ])
+        ->exists();
+
+    if ($hasActiveOrders) {
+        return response()->json([
+            'success' => false,
+            'message' => 'You cannot go offline while there are active orders.',
+        ], 422);
     }
+}
 
     $restaurant->update([
         'is_online' => $request->is_online,
@@ -126,10 +135,45 @@ public function ratings(Request $request)
 
 public function topSellingItems(Request $request)
 {
+    $restaurant = auth()->user();
+
+    $search = $request->query('search');
+    $categoryId = $request->query('category');
+    $sort = $request->query('sort', 'orders');
+
+    $categories = \App\Models\RestaurantCategory::where('restaurant_id', $restaurant->id)
+        ->where('is_active', true)
+        ->orderBy('display_order')
+        ->get()
+        ->map(function ($category) {
+            return [
+                'id' => $category->id,
+                'name' => $category->name,
+            ];
+        });
+
     return response()->json([
         'success' => true,
         'message' => 'Top selling items fetched successfully.',
-        'data' => [],
+        'data' => [
+            'summary' => [
+                'total_orders' => 0,
+                'total_revenue' => 0,
+                'total_products' => 0,
+            ],
+            'filters' => [
+                'search' => $search,
+                'selected_category' => $categoryId,
+                'sort_by' => $sort,
+                'categories' => array_merge([
+                    [
+                        'id' => 0,
+                        'name' => 'All',
+                    ],
+                ], $categories->toArray()),
+            ],
+            'products' => [],
+        ],
     ]);
 }
 

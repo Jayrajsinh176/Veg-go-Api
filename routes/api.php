@@ -18,7 +18,7 @@ use App\Http\Controllers\Api\Rider\RiderShiftController;
 // Admin Side controller
 use App\Http\Controllers\Api\Admin\RiderBankVerificationController;
 
-// Resturant api
+// Restaurant api controller
 use App\Http\Controllers\Api\Restaurant\RestaurantAuthController;
 use App\Http\Controllers\Api\Restaurant\PartnerContractController;
 use App\Http\Controllers\Api\Restaurant\RestaurantOnboardingController;
@@ -26,6 +26,23 @@ use App\Http\Controllers\Api\Restaurant\RestaurantCategoryController;
 use App\Http\Controllers\Api\Restaurant\RestaurantMenuItemController;
 use App\Http\Controllers\Api\Restaurant\RestaurantDashboardController;
 use App\Http\Controllers\Api\Restaurant\RestaurantRevenueController;
+use App\Http\Controllers\Api\Restaurant\RestaurantOrderController;
+use App\Http\Controllers\Api\Restaurant\RestaurantRatingController;
+use App\Http\Controllers\Api\Restaurant\RestaurantProfileController;
+use App\Http\Controllers\Api\Restaurant\RestaurantMenuController;
+use App\Http\Controllers\Api\Restaurant\RestaurantNotificationController;
+use App\Http\Controllers\Api\Restaurant\RestaurantSettingsController;
+use App\Http\Controllers\Api\Restaurant\RestaurantWalletController;
+
+// CUSTOMER APIS CONTOLLERS
+use App\Http\Controllers\Api\Customer\CustomerAuthController;
+use App\Http\Controllers\Api\Customer\CustomerHomeController;
+use App\Http\Controllers\Api\Customer\CustomerAddressController;
+use App\Http\Controllers\Api\Customer\CustomerCategoryController;
+use App\Http\Controllers\Api\Customer\CustomerPopularController;
+use App\Http\Controllers\Api\Customer\CustomerRestaurantController;
+use App\Http\Controllers\Api\Customer\CustomerRestaurantDetailsController;
+use App\Http\Controllers\Api\Customer\CustomerSearchController;
 
 Route::middleware('auth:sanctum')->get('/rider/debug', function (Request $request) {
     return response()->json([
@@ -56,6 +73,23 @@ Route::prefix('restaurant/auth')->group(function () {
     Route::post('/resend-otp', [RestaurantAuthController::class, 'resendOtp']);
 
 });
+
+/*
+|--------------------------------------------------------------------------
+| Customer Authentication
+|--------------------------------------------------------------------------
+*/
+
+Route::prefix('customer/auth')->group(function () {
+
+    Route::post('/send-otp', [CustomerAuthController::class, 'sendOtp']);
+
+    Route::post('/verify-otp', [CustomerAuthController::class, 'verifyOtp']);
+
+    Route::post('/resend-otp', [CustomerAuthController::class, 'resendOtp']);
+
+});
+
 
 Route::middleware('auth:sanctum')
     ->prefix('rider')
@@ -209,6 +243,8 @@ Route::post('/complete-shift', [RiderShiftController::class, 'completeShift']);
 // );
 
     });
+
+
 Route::middleware('auth:sanctum')
     ->prefix('restaurant')
     ->group(function () {
@@ -238,13 +274,17 @@ Route::post('/name', [RestaurantOnboardingController::class, 'saveRestaurantName
 Route::post('/categories', [RestaurantCategoryController::class, 'store']);
 Route::get('/categories', [RestaurantCategoryController::class, 'index']);
 Route::put('/categories/{category}', [RestaurantCategoryController::class, 'update']);
+Route::patch('/categories/{category}/status', [RestaurantCategoryController::class, 'toggleStatus']);
 Route::delete('/categories/{category}', [RestaurantCategoryController::class, 'destroy']);
 
 Route::post('/menu-items', [RestaurantMenuItemController::class, 'store']);
 Route::get('/menu-items', [RestaurantMenuItemController::class, 'index']);
+Route::get('/menu-items/{menuItem}', [RestaurantMenuItemController::class, 'show']);
 Route::put('/menu-items/{menuItem}', [RestaurantMenuItemController::class, 'update']);
 Route::delete('/menu-items/{menuItem}', [RestaurantMenuItemController::class, 'destroy']);
 Route::patch('/menu-items/{menuItem}/availability', [RestaurantMenuItemController::class, 'toggleAvailability']);
+Route::post('/menu-items/{menuItem}/duplicate', [RestaurantMenuItemController::class, 'duplicate']);
+
 
 Route::get('/categories/{category}/items', [RestaurantMenuItemController::class, 'categoryItems']);
 Route::get('/menu/review', [RestaurantMenuItemController::class, 'reviewMenu']);
@@ -299,9 +339,102 @@ Route::get(
 
         });
 
-    });
+        /*
+|--------------------------------------------------------------------------
+| Restaurant Orders
+|--------------------------------------------------------------------------
+*/
 
-    
+Route::prefix('orders')->group(function () {
+
+    Route::get('/', [RestaurantOrderController::class, 'index']);
+
+    Route::get('/pending', [RestaurantOrderController::class, 'pending']);
+
+    Route::get('/preparing', [RestaurantOrderController::class, 'preparing']);
+
+    Route::get('/{order}', [RestaurantOrderController::class, 'show']);
+
+    Route::post('/{order}/accept', [RestaurantOrderController::class, 'accept']);
+
+    Route::post('/{order}/reject', [RestaurantOrderController::class, 'reject']);
+
+    Route::post('/{order}/status', [RestaurantOrderController::class, 'updateStatus']);
+
+});
+
+Route::prefix('ratings')->group(function () {
+
+    Route::get('/summary', [RestaurantRatingController::class, 'summary']);
+
+    Route::get('/highlights', [RestaurantRatingController::class, 'highlights']);
+
+    Route::get('/reviews', [RestaurantRatingController::class, 'reviews']);
+
+    Route::get('/pending-replies', [RestaurantRatingController::class, 'pendingReplies']);
+
+    Route::post('/reply', [RestaurantRatingController::class, 'reply']);
+
+});
+
+Route::prefix('menu')->group(function () {
+
+    Route::get('/dashboard', [RestaurantMenuController::class, 'dashboard']);
+
+});
+
+Route::prefix('profile')->group(function () {
+
+    Route::get('/', [RestaurantProfileController::class, 'index']);
+
+});
+
+Route::get('/notifications', [RestaurantNotificationController::class, 'index']);
+
+Route::patch(
+    '/notifications/{notification}/read',
+    [RestaurantNotificationController::class, 'markAsRead']
+);
+
+Route::patch(
+    '/notifications/read-all',
+    [RestaurantNotificationController::class, 'markAllAsRead']
+);
+
+Route::get('/settings/order-management', [RestaurantSettingsController::class, 'orderManagement']);
+
+Route::put('/settings/order-management', [RestaurantSettingsController::class, 'updateOrderManagement']);
+
+Route::get('/settings/online-status', [RestaurantSettingsController::class, 'onlineStatus']);
+
+Route::put('/settings/online-status', [RestaurantSettingsController::class, 'toggleOnlineStatus']);
+
+Route::delete('/settings/delete-account', [RestaurantSettingsController::class, 'deleteAccount']);
+
+Route::get('/wallet', [RestaurantWalletController::class, 'index']);
+
+Route::get('/wallet/earnings-trend', [RestaurantWalletController::class, 'earningsTrend']);
+
+    });
+Route::middleware('auth:sanctum')->prefix('customer')->group(function () {
+
+    Route::get('/home', [CustomerHomeController::class, 'index']);
+
+    Route::post('/addresses', [CustomerAddressController::class, 'store']);
+    Route::get('/addresses', [CustomerAddressController::class, 'index']);
+    Route::patch('/addresses/{id}/default', [CustomerAddressController::class, 'setDefault']);
+    Route::put('/addresses/{id}', [CustomerAddressController::class, 'update']);
+    Route::delete('/addresses/{id}', [CustomerAddressController::class, 'destroy']);
+
+    Route::get('/categories', [CustomerCategoryController::class,'index']);
+    Route::get('/popular', [CustomerPopularController::class,'index']);
+    Route::get('/restaurants', [CustomerRestaurantController::class,'index']);
+    Route::get('/restaurants/{id}', [CustomerRestaurantDetailsController::class,'show']);
+    Route::get('/search', [CustomerSearchController::class,'index']);
+    Route::get('/categories/{categoryId}/restaurants', [CustomerRestaurantController::class, 'byCategory']);
+
+
+});
     
 Route::get('/user', function (Request $request) {
     return $request->user();
