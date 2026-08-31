@@ -10,6 +10,9 @@ use App\Models\RiderWalletTransaction;
 use App\Models\RiderReferral;
 use Illuminate\Http\Request;
 use App\Services\Rider\RiderEarningService;
+use App\Models\RestaurantOrder;
+use App\Models\RiderDailySettlement;
+
 
 class RiderOrderService
 {
@@ -20,98 +23,130 @@ class RiderOrderService
     $this->earningService = $earningService;
 }
 
-    public function acceptOrder(Rider $rider, DeliveryOrder $order)
-    {
-        // Rider must be approved
-        if ($rider->status !== 'approved') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Your account is not approved.',
-            ], 403);
-        }
+   public function acceptOrder(Rider $rider, DeliveryOrder $order)
+{
+    // Rider must be approved
+    if ($rider->status !== 'approved') {
+        return response()->json([
+            'success' => false,
+            'message' => 'Your account is not approved.',
+        ], 403);
+    }
 
-        // Rider must be online
-        if (!$rider->is_online) {
-            return response()->json([
-                'success' => false,
-                'message' => 'You must be online to accept orders.',
-            ], 400);
-        }
+    // Rider must be online
+    if (!$rider->is_online) {
+        return response()->json([
+            'success' => false,
+            'message' => 'You must be online to accept orders.',
+        ], 400);
+    }
 
-        // Rider must not already have an active order
-$hasActiveOrder = DeliveryOrder::where('rider_id', $rider->id)
-    ->whereIn('status', [
-        'accepted',
-        'arrived',
-        'picked_up',
-    ])
-    ->exists();
+    // Rider must not already have an active order
+    $hasActiveOrder = DeliveryOrder::where('rider_id', $rider->id)
+        ->whereIn('status', [
+            'accepted',
+            'arrived',
+            'picked_up',
+        ])
+        ->exists();
 
-if ($hasActiveOrder) {
-    return response()->json([
-        'success' => false,
-        'message' => 'Complete your current order before accepting a new order.',
-    ], 400);
-}
+    if ($hasActiveOrder) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Complete your current order before accepting a new order.',
+        ], 400);
+    }
 
-        // Order should be available
-        if ($order->status !== 'available') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Order is no longer available.',
-            ], 400);
-        }
+    // Order should be available
+    if ($order->status !== 'available') {
+        return response()->json([
+            'success' => false,
+            'message' => 'Order is no longer available.',
+        ], 400);
+    }
 
+    // Prevent another rider from accepting the same order
+    if ($order->rider_id !== null) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Order is no longer available.',
+        ], 409);
+    }
+
+    DB::transaction(function () use ($rider, $order) {
+
+        /*
+         * Update delivery_orders
+         */
         $order->rider_id = $rider->id;
         $order->status = 'accepted';
         $order->accepted_at = now();
         $order->save();
 
-        $order->load('payment');
+        /*
+         * Update restaurant_orders
+         * using the same order number.
+         */
+        RestaurantOrder::where('order_number', $order->order_number)
+            ->update([
+                'rider_id' => $rider->id,
+            ]);
+    });
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Order accepted successfully.',
-            'data' => [
+    // Refresh order after transaction
+    $order->refresh();
 
-                'order' => [
-                    'id' => $order->id,
-                    'order_number' => $order->order_number,
-                    'status' => $order->status,
-                ],
+    $order->load('payment');
 
-                'restaurant' => [
-                    'name' => $order->restaurant_name,
-                    'address' => $order->restaurant_address,
-                    'phone' => $order->restaurant_phone,
-                    'pickup_latitude' => $order->pickup_latitude,
-                    'pickup_longitude' => $order->pickup_longitude,
-                ],
+    return response()->json([
+        'success' => true,
+        'message' => 'Order accepted successfully.',
+        'data' => [
 
-                'customer' => [
-                    'name' => $order->customer_name,
-                    'phone' => $order->customer_phone,
-                ],
+            'order' => [
+                'id' => $order->id,
+                'order_number' => $order->order_number,
+                'status' => $order->status,
+                'rider_id' => $order->rider_id,
+                'accepted_at' => $order->accepted_at,
+            ],
 
-                'delivery' => [
-                    'address' => $order->delivery_address,
-                    'latitude' => $order->delivery_latitude,
-                    'longitude' => $order->delivery_longitude,
-                ],
+            'restaurant' => [
+                'name' => $order->restaurant_name,
+                'address' => $order->restaurant_address,
+                'phone' => $order->restaurant_phone,
+                'pickup_latitude' => $order->pickup_latitude,
+                'pickup_longitude' => $order->pickup_longitude,
+            ],
 
-                'payment' => [
-                    'method' => optional($order->payment)->payment_method,
-                    'status' => optional($order->payment)->payment_status,
-                    'amount' => optional($order->payment)->order_amount,
-                    'cod_amount' => optional($order->payment)->cod_amount,
-                ],
+            'customer' => [
+                'name' => $order->customer_name,
+                'phone' => $order->customer_phone,
+            ],
 
-                'earning' => [
-                    'delivery_fee' => $order->rider_earning,
-                ],
-            ]
-        ]);
-    }
+            'delivery' => [
+                'address' => $order->delivery_address,
+                'latitude' => $order->delivery_latitude,
+                'longitude' => $order->delivery_longitude,
+            ],
+
+          'payment' => [
+    'method' => $order->payment_method,
+    'status' => $order->payment_status,
+    'amount' => $order->total_amount,
+    'cod_amount' => $order->payment_method === 'cash'
+        ? $order->total_amount
+        : null,
+],
+
+            'earning' => [
+                'delivery_fee' => $order->rider_earning,
+            ],
+        ],
+    ], 200);
+}
+
+
     public function activeOrder(Rider $rider)
 {
     $order = DeliveryOrder::with(['payment', 'items'])
@@ -313,39 +348,47 @@ public function pickupVerification(Rider $rider, DeliveryOrder $order)
         ], 400);
     }
 
+    // Restaurant must mark order as ready
+    if ($order->restaurant_status !== 'ready_for_pickup') {
+        return response()->json([
+            'success' => false,
+            'message' => 'Order is not ready yet. Please wait.',
+            'order_ready' => false,
+        ], 400);
+    }
+
+    // Pickup already completed
     if ($order->pickup_verified_at) {
-    return response()->json([
-        'success' => false,
-        'message' => 'Pickup already completed.'
-    ], 400);
-}
+        return response()->json([
+            'success' => false,
+            'message' => 'Pickup already completed.'
+        ], 400);
+    }
 
     $order->load('items');
 
-return response()->json([
-    'success' => true,
-    'data' => [
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'order_number' => $order->order_number,
+            'order_status' => $order->status,
 
-        'order_number' => $order->order_number,
+            'restaurant' => [
+                'name' => $order->restaurant_name,
+            ],
 
-        'order_status' => $order->status,
+            'otp_required' => !empty($order->pickup_otp),
 
-        'restaurant' => [
-            'name' => $order->restaurant_name,
-        ],
+            'pickup_verified' => !is_null($order->pickup_verified_at),
 
-        'otp_required' => !empty($order->pickup_otp),
-
-        'pickup_verified' => !is_null($order->pickup_verified_at),
-
-        'items' => $order->items->map(function ($item) {
-            return [
-                'name' => $item->product_name,
-                'quantity' => $item->quantity,
-            ];
-        }),
-    ]
-]);
+            'items' => $order->items->map(function ($item) {
+                return [
+                    'name' => $item->product_name,
+                    'quantity' => $item->quantity,
+                ];
+            }),
+        ]
+    ]);
 }
 
 public function verifyPickupOtp(Rider $rider, DeliveryOrder $order, Request $request)
@@ -406,9 +449,14 @@ if ($order->pickup_verified_at) {
         ], 400);
     }
 
-    // Mark verified
-    $order->pickup_verified_at = now();
-    $order->picked_up_at = now();
+// Mark pickup verified
+$verifiedAt = now();
+
+DB::transaction(function () use ($order, $verifiedAt) {
+
+    // Update delivery_orders
+    $order->pickup_verified_at = $verifiedAt;
+    $order->picked_up_at = $verifiedAt;
     $order->status = 'picked_up';
 
     // Clear OTP
@@ -416,6 +464,18 @@ if ($order->pickup_verified_at) {
     $order->pickup_otp_expires_at = null;
 
     $order->save();
+
+    // Sync restaurant_orders
+    RestaurantOrder::where(
+        'order_number',
+        $order->order_number
+    )->update([
+        'rider_id' => $order->rider_id,
+        'order_status' => 'picked_up',
+        'picked_up_at' => $verifiedAt,
+        'pickup_verified_at' => $verifiedAt,
+    ]);
+});
 
 $order->refresh();
 
@@ -445,36 +505,56 @@ public function deliveryVerification(Rider $rider, DeliveryOrder $order)
         ], 400);
     }
 
+    // Pickup already completed / delivery already verified
     if ($order->delivery_verified_at) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Delivery already completed.'
+        ], 400);
+    }
+
+    // Get corresponding restaurant order
+    $restaurantOrder = RestaurantOrder::where(
+        'order_number',
+        $order->order_number
+    )->first();
+
+    if (!$restaurantOrder) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Restaurant order not found.'
+        ], 404);
+    }
+
     return response()->json([
-        'success' => false,
-        'message' => 'Delivery already completed.'
-    ], 400);
+        'success' => true,
+        'data' => [
+
+            'order_number' => $order->order_number,
+
+            'order_status' => $order->status,
+
+            'customer' => [
+                'name' => $order->customer_name,
+                'phone' => $order->customer_phone,
+                'address' => $order->delivery_address,
+            ],
+
+            // OTP is generated and stored by customer order
+            'otp_required' => !empty($restaurantOrder->delivery_otp),
+
+            'delivery_verified' => !is_null(
+                $order->delivery_verified_at
+            ),
+        ]
+    ]);
 }
 
-return response()->json([
-    'success' => true,
-    'data' => [
-
-        'order_number' => $order->order_number,
-
-        'order_status' => $order->status,
-
-        'customer' => [
-            'name' => $order->customer_name,
-            'phone' => $order->customer_phone,
-            'address' => $order->delivery_address,
-        ],
-
-        'otp_required' => !empty($order->delivery_otp),
-
-        'delivery_verified' => !is_null($order->delivery_verified_at),
-    ]
-]);
-}
-
-public function verifyDeliveryOtp(Rider $rider, DeliveryOrder $order, Request $request)
-{
+public function verifyDeliveryOtp(
+    Rider $rider,
+    DeliveryOrder $order,
+    Request $request
+) {
     // Check ownership
     if ($order->rider_id !== $rider->id) {
         return response()->json([
@@ -491,31 +571,46 @@ public function verifyDeliveryOtp(Rider $rider, DeliveryOrder $order, Request $r
         ], 400);
     }
 
+    // Prevent duplicate verification
+    if ($order->delivery_verified_at) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Delivery has already been verified.'
+        ], 400);
+    }
+
     // Validate request
     $request->validate([
         'otp' => 'required|digits:4',
     ]);
 
+    // Get corresponding restaurant order
+    $restaurantOrder = RestaurantOrder::where(
+        'order_number',
+        $order->order_number
+    )->first();
+
+    if (!$restaurantOrder) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Restaurant order not found.'
+        ], 404);
+    }
+
     // Check OTP exists
-    if (!$order->delivery_otp) {
+    if (!$restaurantOrder->delivery_otp) {
         return response()->json([
             'success' => false,
             'message' => 'Delivery OTP is not generated yet.'
         ], 400);
     }
 
-    // Prevent duplicate verification
-if ($order->delivery_verified_at) {
-    return response()->json([
-        'success' => false,
-        'message' => 'Delivery has already been verified.'
-    ], 400);
-}
-
     // Check expiry
     if (
-        $order->delivery_otp_expires_at &&
-        now()->greaterThan($order->delivery_otp_expires_at)
+        $restaurantOrder->delivery_otp_expires_at &&
+        now()->greaterThan(
+            $restaurantOrder->delivery_otp_expires_at
+        )
     ) {
         return response()->json([
             'success' => false,
@@ -524,29 +619,46 @@ if ($order->delivery_verified_at) {
     }
 
     // Verify OTP
-    if ($order->delivery_otp !== $request->otp) {
+    if (
+        $restaurantOrder->delivery_otp !==
+        $request->otp
+    ) {
         return response()->json([
             'success' => false,
             'message' => 'Invalid Delivery OTP.'
         ], 400);
     }
 
-  $order->delivery_verified_at = now();
+    // Mark delivery OTP verified
+    $verifiedAt = now();
 
-$order->delivery_otp = null;
-$order->delivery_otp_expires_at = null;
+    DB::transaction(function () use (
+        $order,
+        $restaurantOrder,
+        $verifiedAt
+    ) {
 
-$order->save();
+        // Delivery order
+        $order->delivery_verified_at = $verifiedAt;
+        $order->save();
 
-return response()->json([
-    'success' => true,
-    'message' => 'Delivery OTP verified successfully.',
-    'data' => [
-        'order_number' => $order->order_number,
-        'otp_verified' => true,
-    ]
-]);
+        // Clear customer OTP
+        $restaurantOrder->delivery_otp = null;
+        $restaurantOrder->delivery_otp_expires_at = null;
+        $restaurantOrder->save();
+    });
 
+    $order->refresh();
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Delivery OTP verified successfully.',
+        'data' => [
+            'order_number' => $order->order_number,
+            'otp_verified' => true,
+            'delivery_verified_at' => $order->delivery_verified_at,
+        ]
+    ]);
 }
 
 public function deliverOrder(Rider $rider, DeliveryOrder $order)
@@ -567,6 +679,14 @@ public function deliverOrder(Rider $rider, DeliveryOrder $order)
         ], 400);
     }
 
+    // Customer delivery OTP must be verified before delivery
+if (!$order->delivery_verified_at) {
+    return response()->json([
+        'success' => false,
+        'message' => 'Delivery OTP must be verified before completing the delivery.'
+    ], 400);
+}
+
     DB::beginTransaction();
 
     try {
@@ -580,11 +700,23 @@ public function deliverOrder(Rider $rider, DeliveryOrder $order)
 
 $earning = $this->earningService->calculateOrderEarning($distance);
 
-        // Deliver Order
-        $order->status = 'delivered';
-        $order->delivered_at = now();
-        $order->rider_earning = $earning['total_amount'];
-        $order->save();
+// Deliver Order
+$deliveredAt = now();
+
+$order->status = 'delivered';
+$order->delivered_at = $deliveredAt;
+$order->rider_earning = $earning['total_amount'];
+$order->save();
+
+// Sync restaurant order
+RestaurantOrder::where(
+    'order_number',
+    $order->order_number
+)->update([
+    'rider_id' => $order->rider_id,
+    'order_status' => 'delivered',
+    'delivered_at' => $deliveredAt,
+]);
 
         // Check if earning already exists
         $alreadyExists = RiderEarning::where(
@@ -601,6 +733,37 @@ $earning = $this->earningService->calculateOrderEarning($distance);
 'amount' => $earning['total_amount'],
     'title' => 'Delivery Earnings',
     'description' => 'Earnings for Order #' . $order->order_number,
+]);
+
+$settlementDate = $deliveredAt->toDateString();
+
+$payoutDate = $deliveredAt
+    ->copy()
+    ->addDays(3)
+    ->toDateString();
+
+$settlement = RiderDailySettlement::firstOrCreate(
+    [
+        'rider_id' => $rider->id,
+        'settlement_date' => $settlementDate,
+    ],
+    [
+        'total_amount' => 0,
+        'payout_date' => $payoutDate,
+        'status' => 'pending',
+    ]
+);
+
+$settlement->increment(
+    'total_amount',
+    $earning['total_amount']
+);
+
+\Log::info('DAILY SETTLEMENT CREATED', [
+    'rider_id' => $rider->id,
+    'settlement_date' => $settlementDate,
+    'payout_date' => $payoutDate,
+    'amount' => $earning['total_amount'],
 ]);
 
 // Update wallet
@@ -691,6 +854,55 @@ if ($referral->completed_orders >= 10) {
             'message' => $e->getMessage(),
         ], 500);
     }
+}
+
+public function arrivedAtRestaurant(Rider $rider, DeliveryOrder $order)
+{
+    if ($order->rider_id !== $rider->id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Unauthorized access.',
+        ], 403);
+    }
+
+    if ($order->status !== 'accepted') {
+        return response()->json([
+            'success' => false,
+            'message' => 'Only accepted orders can be marked as arrived.',
+        ], 400);
+    }
+
+    DB::transaction(function () use ($order) {
+
+        $order->update([
+            'status' => 'arrived',
+            'arrived_at' => now(),
+        ]);
+
+        // Keep rider assignment synced with restaurant order
+        RestaurantOrder::where(
+            'order_number',
+            $order->order_number
+        )->update([
+            'rider_id' => $order->rider_id,
+        ]);
+    });
+
+    $order->refresh();
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Arrived at restaurant successfully.',
+        'data' => [
+            'order' => [
+                'id' => $order->id,
+                'order_number' => $order->order_number,
+                'status' => $order->status,
+                'rider_id' => $order->rider_id,
+                'arrived_at' => $order->arrived_at,
+            ],
+        ],
+    ]);
 }
 
 }

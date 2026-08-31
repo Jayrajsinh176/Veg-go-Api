@@ -241,12 +241,12 @@ public function uploadPuc(Request $request)
         ], 400);
     }
 
-    if ($rider->vehicleType->code === 'electric_bike') {
-        return response()->json([
-            'success' => false,
-            'message' => 'PUC document is not required for Electric Bike',
-        ], 400);
-    }
+if ($rider->vehicleType->code === 'ev') {
+    return response()->json([
+        'success' => false,
+        'message' => 'PUC document is not required for EV',
+    ], 400);
+}
 
     $validator = Validator::make($request->all(), [
         'puc_document' => [
@@ -377,6 +377,7 @@ public function requiredDocuments(Request $request)
 
 public function uploadRcBook(Request $request)
 {
+    
     $validator = Validator::make($request->all(), [
         'rc_book_document' => [
             'required',
@@ -396,9 +397,37 @@ public function uploadRcBook(Request $request)
 
     $rider = $request->user();
 
+    $rider->load('vehicleType');
+
+    if (!$rider->vehicleType) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Please select your vehicle type first',
+        ], 400);
+    }
+
     $kyc = RiderKyc::where('rider_id', $rider->id)->first();
 
-    if (!$kyc || !$kyc->puc_document) {
+    if (!$kyc || !$kyc->driving_license_document) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Please complete driving licence details first',
+        ], 400);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | PUC requirement
+    |--------------------------------------------------------------------------
+    | Petrol vehicles require PUC.
+    | EV vehicles do not require PUC.
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+        $rider->vehicleType->code !== 'ev' &&
+        !$kyc->puc_document
+    ) {
         return response()->json([
             'success' => false,
             'message' => 'Please upload PUC document first',

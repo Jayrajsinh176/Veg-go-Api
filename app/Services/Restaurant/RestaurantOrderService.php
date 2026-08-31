@@ -4,6 +4,7 @@ namespace App\Services\Restaurant;
 
 use App\Models\OrderStatusHistory;
 use App\Models\RestaurantOrder;
+use App\Models\DeliveryOrder;
 use App\Models\RestaurantWalletTransaction;
 use Illuminate\Support\Facades\DB;
 
@@ -103,6 +104,12 @@ public function accept(Request $request, $orderId)
     $restaurant = $request->user();
 
     $order = RestaurantOrder::where('restaurant_id', $restaurant->id)
+        ->with([
+            'restaurant.address',
+            'customer',
+            'deliveryAddress',
+            'items',
+        ])
         ->findOrFail($orderId);
 
     if ($order->order_status !== 'pending') {
@@ -114,13 +121,68 @@ public function accept(Request $request, $orderId)
 
     }
 
-    DB::transaction(function () use ($order) {
+    /*
+     * Check restaurant address
+     */
+    if (!$order->restaurant || !$order->restaurant->address) {
 
+        return response()->json([
+            'success' => false,
+            'message' => 'Restaurant address not found.',
+        ], 422);
+
+    }
+
+    /*
+     * Check customer delivery address
+     */
+    if (!$order->deliveryAddress) {
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Delivery address not found.',
+        ], 422);
+
+    }
+
+    $restaurantAddress = $order->restaurant->address;
+    $deliveryAddress = $order->deliveryAddress;
+
+    /*
+     * Check coordinates because delivery_orders
+     * requires all four coordinates.
+     */
+    if (
+        $restaurantAddress->latitude === null ||
+        $restaurantAddress->longitude === null ||
+        $deliveryAddress->latitude === null ||
+        $deliveryAddress->longitude === null
+    ) {
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Pickup or delivery location is not available.',
+        ], 422);
+
+    }
+
+    DB::transaction(function () use (
+        $order,
+        $restaurantAddress,
+        $deliveryAddress
+    ) {
+
+        /*
+         * Update restaurant order
+         */
         $order->update([
             'order_status' => 'accepted',
             'accepted_at' => now(),
         ]);
 
+        /*
+         * Add restaurant status history
+         */
         OrderStatusHistory::create([
             'order_id'   => $order->id,
             'status'     => 'accepted',
@@ -128,8 +190,68 @@ public function accept(Request $request, $orderId)
             'remarks'    => 'Order accepted by restaurant',
         ]);
 
+        /*
+         * Create Rider delivery order.
+         *
+         * firstOrCreate prevents duplicate delivery orders
+         * if the same order is processed again.
+         */
+       $deliveryOrder = DeliveryOrder::firstOrCreate(
+    [
+        'order_number' => $order->order_number,
+    ],
+    [
+        'restaurant_name' => $order->restaurant->restaurant_name,
+
+        'restaurant_address' =>
+            $restaurantAddress->complete_address
+            ?: $restaurantAddress->full_address,
+
+        'restaurant_phone' => $order->restaurant->mobile,
+
+        'customer_name' => optional($order->customer)->name,
+
+        'customer_phone' => optional($order->customer)->phone,
+
+        'delivery_address' => $deliveryAddress->address,
+
+        'pickup_latitude' => $restaurantAddress->latitude,
+
+        'pickup_longitude' => $restaurantAddress->longitude,
+
+        'delivery_latitude' => $deliveryAddress->latitude,
+
+        'delivery_longitude' => $deliveryAddress->longitude,
+
+        'rider_earning' => $order->delivery_charge ?? 0,
+
+        'rider_id' => null,
+
+        'status' => 'available',
+    ]
+);
+
+/*
+|--------------------------------------------------------------------------
+| Copy restaurant order items to rider delivery order
+|--------------------------------------------------------------------------
+*/
+
+foreach ($order->items as $item) {
+
+    \App\Models\OrderItem::create([
+        'delivery_order_id' => $deliveryOrder->id,
+        'product_name' => $item->menu_item_name,
+        'quantity' => $item->quantity,
+        'price' => $item->unit_price,
+        'special_instruction' => $item->special_instruction,
+    ]);
+}
     });
 
+    /*
+     * Load the same relationships as before.
+     */
     $order->load([
         'items',
         'payment',
@@ -175,6 +297,12 @@ public function updateStatus(Request $request, $orderId)
             'order_status' => $request->status,
         ];
 
+        // Sync restaurant status to delivery order
+DeliveryOrder::where('order_number', $order->order_number)
+    ->update([
+        'restaurant_status' => $request->status,
+    ]);
+
         /*
         |--------------------------------------------------------------------------
         | Preparing
@@ -204,6 +332,13 @@ public function updateStatus(Request $request, $orderId)
 
             $updateData['pickup_otp_generated_at'] = now();
 
+            if ($order->rider_id) {
+    DeliveryOrder::where('order_number', $order->order_number)
+        ->where('rider_id', $order->rider_id)
+        ->update([
+            'pickup_otp' => $updateData['pickup_otp'],
+        ]);
+}
             /*
             |--------------------------------------------------------------------------
             | Restaurant Commission & Earning

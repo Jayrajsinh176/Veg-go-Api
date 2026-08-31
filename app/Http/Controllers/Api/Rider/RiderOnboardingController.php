@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Rider;
 
 use App\Http\Controllers\Controller;
 use App\Models\City;
+use App\Models\CityArea;
 use App\Models\VehicleType;
 use App\Models\OrderType;
 use App\Models\WorkZone;
@@ -70,6 +71,82 @@ class RiderOnboardingController extends Controller
     ]);
 }
 
+public function cityAreas(Request $request)
+{
+    $rider = $request->user();
+
+    if (!$rider->city_id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Please select your city first',
+        ], 400);
+    }
+
+    $areas = CityArea::where('city_id', $rider->city_id)
+        ->where('is_active', true)
+        ->select('id', 'name')
+        ->orderBy('name')
+        ->get();
+
+    return response()->json([
+        'success' => true,
+        'areas' => $areas,
+    ]);
+}
+
+public function selectCityArea(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'city_area_id' => [
+            'required',
+            'integer',
+            'exists:city_areas,id',
+        ],
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Validation failed',
+            'errors' => $validator->errors(),
+        ], 422);
+    }
+
+    $rider = $request->user();
+
+    if (!$rider->city_id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Please select your city first',
+        ], 400);
+    }
+
+    $area = CityArea::where('id', $request->city_area_id)
+        ->where('city_id', $rider->city_id)
+        ->where('is_active', true)
+        ->first();
+
+    if (!$area) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Selected area is not available in your city',
+        ], 400);
+    }
+
+    $rider->update([
+        'city_area_id' => $area->id,
+    ]);
+
+    return response()->json([
+        'success' => true,
+        'message' => 'City area selected successfully',
+        'city_area' => [
+            'id' => $area->id,
+            'name' => $area->name,
+        ],
+    ]);
+}
+
    public function onboardingStatus(Request $request)
 {
     $rider = $request->user();
@@ -103,12 +180,19 @@ class RiderOnboardingController extends Controller
     ]);
 }
 
-    public function vehicleTypes()
+public function vehicleTypes()
 {
     $vehicleTypes = VehicleType::where('is_active', true)
         ->select('id', 'name', 'code', 'image')
         ->orderBy('name')
-        ->get();
+        ->get()
+        ->map(function ($vehicleType) {
+            if ($vehicleType->image) {
+                $vehicleType->image = url($vehicleType->image);
+            }
+
+            return $vehicleType;
+        });
 
     return response()->json([
         'success' => true,
@@ -412,17 +496,24 @@ public function deliveryKits(Request $request)
         ], 400);
     }
 
-    $kits = DeliveryKit::where('is_active', true)
-        ->select(
-            'id',
-            'name',
-            'code',
-            'half_tshirt_quantity',
-            'full_tshirt_quantity',
-            'bag_quantity',
-            'image'
-        )
-        ->get();
+$kits = DeliveryKit::where('is_active', true)
+    ->select(
+        'id',
+        'name',
+        'code',
+        'half_tshirt_quantity',
+        'full_tshirt_quantity',
+        'bag_quantity',
+        'image'
+    )
+    ->get()
+    ->map(function ($kit) {
+        $kit->image = $kit->image
+            ? asset($kit->image)
+            : null;
+
+        return $kit;
+    });
 
     return response()->json([
         'success' => true,
@@ -470,6 +561,7 @@ public function selectDeliveryKit(Request $request)
 
     $rider->update([
         'delivery_kit_id' => $kit->id,
+        'delivery_kit_completed' => true,
     ]);
 
     return response()->json([
@@ -483,6 +575,7 @@ public function selectDeliveryKit(Request $request)
             'full_tshirt_quantity' => $kit->full_tshirt_quantity,
             'bag_quantity' => $kit->bag_quantity,
         ],
+        'delivery_kit_completed' => true,
         'next_step' => 'tshirt_size',
     ]);
 }
@@ -683,25 +776,33 @@ public function confirmDeliveryKit(Request $request)
             'message' => 'Selected delivery kit is not available',
         ], 400);
     }
+$rider->update([
+    'delivery_bag_amount' => 999.00,
+    'delivery_bag_payment_status' => 'pending',
+    'delivery_kit_completed' => true,
+    'onboarding_completed' => false,
+]);
 
-    $rider->update([
-        'delivery_kit_completed' => true,
-        'onboarding_completed' => true,
-    ]);
+return response()->json([
+    'success' => true,
+    'message' => 'Delivery kit selected successfully. ₹999 payment is pending.',
+    'onboarding_completed' => false,
+    'delivery_kit_completed' => true,
+    'rider_status' => $rider->status,
 
-    return response()->json([
-        'success' => true,
-        'message' => 'VegGo onboarding completed successfully',
-        'onboarding_completed' => true,
-        'delivery_kit_completed' => true,
-        'rider_status' => $rider->status,
-        'delivery_kit' => [
-            'id' => $kit->id,
-            'name' => $kit->name,
-            'tshirt_size' => $rider->tshirt_size,
-        ],
-        'next_step' => 'rider_dashboard',
-    ]);
+    'delivery_bag' => [
+        'amount' => '999.00',
+        'payment_status' => 'pending',
+    ],
+
+    'delivery_kit' => [
+        'id' => $kit->id,
+        'name' => $kit->name,
+        'tshirt_size' => $rider->tshirt_size,
+    ],
+
+    'next_step' => 'payment_pending',
+]);
 }
 
 

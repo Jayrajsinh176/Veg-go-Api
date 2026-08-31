@@ -270,4 +270,20 @@ public function resendOtp(Request $request)
     }
 }
 
+/**
+ * Logout customer.
+ */
+public function logout(Request $request)
+{
+    $customer = $request->user();
+
+    // Delete the current access token.
+    $customer->currentAccessToken()?->delete();
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Logged out successfully.',
+    ], 200);
+}
+
 }

@@ -35,6 +35,7 @@ class DeliveryOrder extends Model
 
         // Order Status
         'status',
+        'restaurant_status',
 
         // Timeline
         'accepted_at',

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class RiderUpiDetail extends Model
 {
@@ -21,7 +22,7 @@ class RiderUpiDetail extends Model
         'verified_at' => 'datetime',
     ];
 
-    public function rider()
+    public function rider(): BelongsTo
     {
         return $this->belongsTo(Rider::class);
     }

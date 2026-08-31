@@ -1,0 +1,258 @@
+<?php
+
+namespace App\Http\Controllers\Api\Admin;
+
+use App\Http\Controllers\Controller;
+use App\Models\Customer;
+use App\Models\RestaurantOrder;
+use Illuminate\Http\Request;
+
+class AdminCustomerController extends Controller
+{
+    /**
+     * Get customer list
+     */
+   public function index(Request $request)
+{
+    $customers = Customer::query()
+        ->select([
+            'id',
+            'name',
+            'phone',
+            'email',
+            'date_of_birth',
+            'profile_photo',
+            'created_at',
+            'updated_at',
+        ])
+        ->with([
+            'addresses' => function ($query) {
+                $query->where('is_default', true)
+                    ->select([
+                        'id',
+                        'customer_id',
+                        'label',
+                        'receiver_name',
+                        'receiver_phone',
+                        'address',
+                        'landmark',
+                        'pincode',
+                        'latitude',
+                        'longitude',
+                        'is_default',
+                    ]);
+            },
+        ])
+        ->latest('id')
+        ->paginate(10);
+
+    return response()->json([
+        'message' => 'Customers fetched successfully.',
+        'data' => $customers,
+    ]);
+} 
+
+public function show($id)
+{
+    $customer = Customer::query()
+        ->select([
+            'id',
+            'name',
+            'phone',
+            'email',
+            'date_of_birth',
+            'profile_photo',
+            'created_at',
+            'updated_at',
+        ])
+        ->with([
+            'addresses' => function ($query) {
+                $query->select([
+                    'id',
+                    'customer_id',
+                    'label',
+                    'receiver_name',
+                    'receiver_phone',
+                    'address',
+                    'landmark',
+                    'pincode',
+                    'latitude',
+                    'longitude',
+                    'is_default',
+                    'created_at',
+                    'updated_at',
+                ]);
+            },
+        ])
+        ->find($id);
+
+    if (!$customer) {
+        return response()->json([
+            'message' => 'Customer not found.',
+        ], 404);
+    }
+
+    return response()->json([
+        'message' => 'Customer details fetched successfully.',
+        'data' => $customer,
+    ]);
+}
+
+/**
+ * Get customer order history
+ */
+public function orders($customerId)
+{
+    $orders = RestaurantOrder::query()
+        ->where('customer_id', $customerId)
+        ->select([
+            'id',
+            'customer_id',
+            'restaurant_id',
+            'rider_id',
+            'order_number',
+            'total_amount',
+            'payment_method',
+            'order_status',
+            'placed_at',
+            'delivered_at',
+            'cancel_reason',
+        ])
+        ->with([
+            'customer:id,name',
+            'restaurant:id,restaurant_name',
+            'rider:id,name',
+        ])
+        ->latest('id')
+        ->paginate(10);
+
+    $orders->getCollection()->transform(function ($order) {
+        return [
+            'order_number' => $order->order_number,
+            'customer_name' => $order->customer?->name,
+            'restaurant_name' => $order->restaurant?->restaurant_name,
+            'rider_name' => $order->rider?->name,
+            'total_amount' => $order->total_amount,
+            'payment_method' => $order->payment_method,
+            'order_status' => $order->order_status,
+            'placed_at' => $order->placed_at,
+            'delivered_at' => $order->delivered_at,
+            'cancel_reason' => $order->order_status === 'cancelled'
+                ? $order->cancel_reason
+                : null,
+        ];
+    });
+
+    return response()->json([
+        'message' => 'Customer order history fetched successfully.',
+        'data' => $orders,
+    ]);
+}
+
+/**
+ * Get customer order details
+ */
+public function orderDetails($customerId, $orderId)
+{
+    $order = RestaurantOrder::query()
+        ->where('id', $orderId)
+        ->where('customer_id', $customerId)
+        ->select([
+            'id',
+            'customer_id',
+            'restaurant_id',
+            'rider_id',
+            'delivery_address_id',
+            'order_number',
+            'subtotal',
+            'delivery_charge',
+            'packing_charge',
+            'tax',
+            'discount',
+            'total_amount',
+            'payment_method',
+            'payment_status',
+            'order_status',
+            'placed_at',
+            'delivered_at',
+            'cancel_reason',
+        ])
+        ->with([
+            'customer:id,name,phone',
+            'restaurant:id,restaurant_name',
+            'rider:id,name,phone',
+            'deliveryAddress:id,customer_id,label,receiver_name,receiver_phone,address,landmark,pincode',
+            'items:id,order_id,menu_item_name,variant_name,quantity,unit_price,total_price',
+            'payment:id,order_id,payment_method,payment_status',
+        ])
+        ->first();
+
+    if (!$order) {
+        return response()->json([
+            'message' => 'Order not found for this customer.',
+        ], 404);
+    }
+
+    return response()->json([
+        'message' => 'Customer order details fetched successfully.',
+        'data' => [
+            'order_number' => $order->order_number,
+
+            'order_status' => $order->order_status,
+            'placed_at' => $order->placed_at,
+            'delivered_at' => $order->delivered_at,
+            'cancel_reason' => $order->order_status === 'cancelled'
+                ? $order->cancel_reason
+                : null,
+
+            'customer' => [
+                'name' => $order->customer?->name,
+                'phone' => $order->customer?->phone,
+            ],
+
+            'restaurant' => [
+                'name' => $order->restaurant?->restaurant_name,
+            ],
+
+            'rider' => [
+                'name' => $order->rider?->name,
+                'phone' => $order->rider?->phone,
+            ],
+
+            'delivery_address' => $order->deliveryAddress ? [
+                'label' => $order->deliveryAddress->label,
+                'receiver_name' => $order->deliveryAddress->receiver_name,
+                'receiver_phone' => $order->deliveryAddress->receiver_phone,
+                'address' => $order->deliveryAddress->address,
+                'landmark' => $order->deliveryAddress->landmark,
+                'pincode' => $order->deliveryAddress->pincode,
+            ] : null,
+
+            'items' => $order->items->map(function ($item) {
+                return [
+                    'food_name' => $item->menu_item_name,
+                    'variant' => $item->variant_name,
+                    'quantity' => $item->quantity,
+                    'unit_price' => $item->unit_price,
+                    'total_price' => $item->total_price,
+                ];
+            })->values(),
+
+            'amount' => [
+                'subtotal' => $order->subtotal,
+                'delivery_charge' => $order->delivery_charge,
+                'packing_charge' => $order->packing_charge,
+                'tax' => $order->tax,
+                'discount' => $order->discount,
+                'total_amount' => $order->total_amount,
+            ],
+
+            'payment' => [
+                'method' => $order->payment?->payment_method ?? $order->payment_method,
+                'status' => $order->payment?->payment_status ?? $order->payment_status,
+            ],
+        ],
+    ]);
+}
+
+}

@@ -18,4 +18,10 @@ class City extends Model
         'longitude' => 'decimal:7',
         'is_available' => 'boolean',
     ];
+
+    public function areas()
+{
+    return $this->hasMany(CityArea::class);
+}
+
 }

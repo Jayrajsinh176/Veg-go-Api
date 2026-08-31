@@ -117,38 +117,10 @@ public function orderDetails(Request $request, DeliveryOrder $order)
 
 public function arrivedAtRestaurant(Request $request, DeliveryOrder $order)
 {
-    $rider = $request->user();
-
-    // Check if the order belongs to this rider
-    if ($order->rider_id !== $rider->id) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Unauthorized access.'
-        ], 403);
-    }
-
-    // Only accepted orders can be marked as arrived
-    if ($order->status !== 'accepted') {
-        return response()->json([
-            'success' => false,
-            'message' => 'Only accepted orders can be marked as arrived.'
-        ], 400);
-    }
-
-    $order->status = 'arrived';
-    $order->arrived_at = now();
-    $order->save();
-
-    return response()->json([
-        'success' => true,
-        'message' => 'Arrived at restaurant successfully.',
-        'order' => [
-            'id' => $order->id,
-            'order_number' => $order->order_number,
-            'status' => $order->status,
-            'arrived_at' => $order->arrived_at,
-        ]
-    ]);
+    return $this->orderService->arrivedAtRestaurant(
+        $request->user(),
+        $order
+    );
 }
 
 public function pickupVerification(Request $request, DeliveryOrder $order)

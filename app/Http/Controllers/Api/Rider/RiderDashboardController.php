@@ -5,9 +5,11 @@ namespace App\Http\Controllers\Api\Rider;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\DeliveryOrder;
+use App\Models\RiderKyc;
 use App\Models\RiderEarning;
 use App\Models\RiderWalletTransaction;
 use App\Services\Rider\RiderShiftService;
+use App\Models\RiderDailySettlement;
 use Carbon\Carbon;
 
 class RiderDashboardController extends Controller
@@ -22,6 +24,11 @@ public function __construct(RiderShiftService $shiftService)
     public function home(Request $request)
 {
     $rider = $request->user();
+    $kyc = RiderKyc::where('rider_id', $rider->id)->first();
+
+$profileImage = $kyc && $kyc->selfie
+    ? asset('storage/' . $kyc->selfie)
+    : null;
 $availableOrdersCount = 0;
 $estimatedEarnings = 0;
 
@@ -104,7 +111,9 @@ $todayBonus = RiderEarning::where('rider_id', $rider->id)
     'name' => $rider->name,
     'first_name' => $rider->first_name,
     'status' => $rider->status,
-    'profile_image' => $rider->profile_image ?? null,
+   'profile_image' => $kyc && $kyc->selfie
+    ? asset('storage/' . $kyc->selfie)
+    : null,
 ],
 
      'availability' => [
@@ -787,16 +796,40 @@ public function wallet(Request $request)
     ->where('type', 'debit')
     ->sum('amount');
 
+    $pendingSettlement = RiderDailySettlement::where(
+        'rider_id',
+        $rider->id
+    )
+    ->where('status', 'pending')
+    ->sum('total_amount');
+
+    $nextPayout = RiderDailySettlement::where(
+        'rider_id',
+        $rider->id
+    )
+    ->where('status', 'pending')
+    ->whereDate('payout_date', '>=', today())
+    ->orderBy('payout_date')
+    ->first();
+
+    $availableBalance = max(
+        0,
+        (float) $rider->wallet_balance - (float) $pendingSettlement
+    );
+
     return response()->json([
         'success' => true,
         'data' => [
             'wallet_balance' => (float) $rider->wallet_balance,
             'total_credit' => (float) $totalCredit,
             'total_debit' => (float) $totalDebit,
-            'available_balance' => (float) $rider->wallet_balance,
+            'pending_settlement' => (float) $pendingSettlement,
+            'available_balance' => $availableBalance,
+            'next_payout_date' => $nextPayout?->payout_date?->format('Y-m-d'),
         ]
     ]);
 }
+
 
 public function walletHistory(Request $request)
 {

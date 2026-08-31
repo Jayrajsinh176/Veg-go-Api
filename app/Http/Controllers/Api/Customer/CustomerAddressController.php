@@ -206,4 +206,29 @@ public function destroy(Request $request, $id)
     ], 200);
 }
 
+/**
+ * Get a single customer address.
+ */
+public function show(Request $request, $id)
+{
+    $customer = $request->user();
+
+    $address = $customer->addresses()->find($id);
+
+    if (!$address) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Address not found.',
+        ], 404);
+    }
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Address fetched successfully.',
+        'data' => [
+            'address' => $address,
+        ],
+    ], 200);
+}
+
 }

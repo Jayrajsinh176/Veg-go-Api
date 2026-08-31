@@ -17,6 +17,8 @@ protected $fillable = [
     'pickup_otp',
     'pickup_otp_generated_at',
     'pickup_verified_at',
+        'delivery_otp',
+    'delivery_otp_expires_at',
     'order_number',
     'subtotal',
     'delivery_charge',
@@ -51,6 +53,11 @@ protected $casts = [
     'restaurant_earning' => 'decimal:2',
     'earning_credited_at' => 'datetime',
 
+      'pickup_otp_generated_at' => 'datetime',
+    'pickup_verified_at' => 'datetime',
+
+    'delivery_otp_expires_at' => 'datetime',
+
    
 ];
 
@@ -61,6 +68,19 @@ protected $casts = [
     {
         return $this->belongsTo(Restaurant::class);
     }
+
+    public function customer()
+{
+    return $this->belongsTo(Customer::class);
+}
+
+    /**
+ * Delivery Address
+ */
+public function deliveryAddress()
+{
+    return $this->belongsTo(CustomerAddress::class, 'delivery_address_id');
+}
 
     /**
      * Assigned Rider

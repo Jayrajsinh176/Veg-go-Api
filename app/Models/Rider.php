@@ -21,6 +21,7 @@ class Rider extends Authenticatable
         'phone_verified_at',
         'language',
         'city_id',
+          'city_area_id',
         'status',
         'onboarding_completed',
         'work_settings_completed',
@@ -35,6 +36,9 @@ class Rider extends Authenticatable
         'work_zone_id',
         'order_type_id',
         'delivery_kit_id',
+        'delivery_bag_amount',
+'delivery_bag_payment_status',
+'delivery_bag_paid_at',
         'tshirt_size',
         'is_online',
 'wallet_balance',
@@ -87,6 +91,11 @@ public function upiDetail()
 public function city()
 {
     return $this->belongsTo(City::class);
+}
+
+public function cityArea()
+{
+    return $this->belongsTo(CityArea::class);
 }
 
 public function workZone()

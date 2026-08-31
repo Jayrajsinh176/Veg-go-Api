@@ -11,20 +11,23 @@ class Customer extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
 
-    protected $fillable = [
-        'phone',
-        'phone_verified_at',
-        'name',
-        'email',
-    ];
+protected $fillable = [
+    'phone',
+    'name',
+    'email',
+    'date_of_birth',
+    'profile_photo',
+    'push_notifications_enabled',
+];
 
     protected $hidden = [
         'remember_token',
     ];
 
-    protected $casts = [
-        'phone_verified_at' => 'datetime',
-    ];
+  protected $casts = [
+    'phone_verified_at' => 'datetime',
+    'push_notifications_enabled' => 'boolean',
+];
 
     public function otps()
     {
@@ -34,6 +37,21 @@ class Customer extends Authenticatable
     public function addresses()
 {
     return $this->hasMany(CustomerAddress::class);
+}
+
+public function favoriteRestaurants()
+{
+    return $this->hasMany(CustomerFavoriteRestaurant::class);
+}
+
+public function favoriteFoods()
+{
+    return $this->hasMany(CustomerFavoriteFood::class);
+}
+
+public function notifications()
+{
+    return $this->hasMany(CustomerNotification::class);
 }
 
 }
