@@ -23,6 +23,8 @@ protected $fillable = [
     'subtotal',
     'delivery_charge',
     'packing_charge',
+    'platform_fee',
+    'small_order_fee',
     'tax',
     'discount',
     'total_amount',
@@ -44,6 +46,7 @@ protected $fillable = [
     'delivered_at',
     'cancelled_at',
     'cancel_reason',
+    'cancelled_by',
     'notes',
 ];
 
@@ -112,5 +115,25 @@ public function deliveryAddress()
     public function payment()
     {
         return $this->hasOne(RestaurantOrderPayment::class, 'order_id');
+    }
+
+    /**
+     * Review submitted for this order
+     */
+    public function review()
+    {
+        return $this->hasOne(RestaurantReview::class, 'restaurant_order_id');
+    }
+
+    /**
+     * Orders a restaurant may see and act on:
+     * cash orders, or online orders whose payment is confirmed.
+     */
+    public function scopeVisibleToRestaurant($query)
+    {
+        return $query->where(function ($q) {
+            $q->where('payment_method', 'cash')
+                ->orWhere('payment_status', 'paid');
+        });
     }
 }

@@ -197,9 +197,19 @@ public function deliverOrder(Request $request, DeliveryOrder $order)
 {
     return $this->orderService->deliverOrder(
         $request->user(),
-        $order
+        $order,
+        $request
     );
 }
 
+public function cancelOrder(Request $request, DeliveryOrder $order)
+{
+    return $this->orderService->cancelOrder(
+        $request->user(),
+        $order,
+        $request
+    );
+}
 
 }
+

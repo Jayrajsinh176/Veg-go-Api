@@ -18,6 +18,7 @@ class Rider extends Authenticatable
     protected $fillable = [
         'name',
         'phone',
+        'email',
         'phone_verified_at',
         'language',
         'city_id',
@@ -29,6 +30,7 @@ class Rider extends Authenticatable
         'profile_completed',
         'delivery_kit_completed',
         'vehicle_type_id',
+        'vehicle_number',
         'vehicle_type_selected_at',
         'first_name',
         'last_name',
@@ -42,6 +44,7 @@ class Rider extends Authenticatable
         'tshirt_size',
         'is_online',
 'wallet_balance',
+'pending_cod',
 'last_online_at',
 'latitude',
 'longitude',
@@ -61,6 +64,7 @@ class Rider extends Authenticatable
         'vehicle_type_selected_at' => 'datetime',
         'is_online' => 'boolean',
 'wallet_balance' => 'decimal:2',
+'pending_cod' => 'decimal:2',
 'last_online_at' => 'datetime',
 'latitude' => 'decimal:7',
 'longitude' => 'decimal:7',
@@ -77,10 +81,6 @@ class Rider extends Authenticatable
     public function bankDetail()
 {
     return $this->hasOne(RiderBankDetail::class);
-}
-public function withdrawals()
-{
-    return $this->hasMany(RiderWithdrawal::class);
 }
 
 public function upiDetail()
@@ -126,6 +126,41 @@ public function referredBy()
 public function shiftBookings()
 {
     return $this->hasMany(RiderShiftBooking::class);
+}
+
+public function earnings()
+{
+    return $this->hasMany(RiderEarning::class);
+}
+
+public function deliveryOrders()
+{
+    return $this->hasMany(DeliveryOrder::class);
+}
+
+public function deliveryAddress()
+{
+    return $this->hasOne(RiderDeliveryAddress::class);
+}
+
+public function applicationLogs()
+{
+    return $this->hasMany(RiderApplicationLog::class);
+}
+
+public function weeklySettlements()
+{
+    return $this->hasMany(RiderWeeklySettlement::class);
+}
+
+public function walletTransactions()
+{
+    return $this->hasMany(RiderWalletTransaction::class);
+}
+
+public function codSettlements()
+{
+    return $this->hasMany(RiderCodSettlement::class);
 }
 
 }

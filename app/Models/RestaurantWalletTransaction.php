@@ -9,6 +9,7 @@ class RestaurantWalletTransaction extends Model
 {
     protected $fillable = [
         'restaurant_id',
+        'settlement_id',
         'type',
         'amount',
         'balance_after',
@@ -27,5 +28,10 @@ class RestaurantWalletTransaction extends Model
     public function restaurant(): BelongsTo
     {
         return $this->belongsTo(Restaurant::class);
+    }
+
+    public function settlement(): BelongsTo
+    {
+        return $this->belongsTo(RestaurantWeeklySettlement::class, 'settlement_id');
     }
 }

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MSG91 Widget Test</title>
+  <script type="text/javascript" src="https://verify.msg91.com/otp-provider.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f4f6f8;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+    }
+    .card {
+      background: #fff;
+      padding: 28px;
+      border-radius: 12px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+      max-width: 520px;
+      width: 100%;
+    }
+    h2 { margin-top: 0; color: #1e293b; }
+    p { color: #64748b; font-size: 14px; line-height: 1.5; }
+    label { font-weight: 600; font-size: 13px; color: #334155; display: block; margin-top: 14px; margin-bottom: 6px; }
+    input[type="text"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    button {
+      margin-top: 18px;
+      width: 100%;
+      padding: 12px;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    button:hover { background: #1d4ed8; }
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px;
+      font-family: monospace;
+      font-size: 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      margin-top: 8px;
+    }
+    .output-box {
+      margin-top: 20px;
+      padding: 14px;
+      border-radius: 8px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      display: none;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .badge-success { background: #dcfce7; color: #166534; }
+    .badge-fail { background: #fee2e2; color: #991b1b; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>MSG91 OTP Verification Test</h2>
+    <p>Use your widget to send OTP to your phone, get the verified access token, and test it against your Laravel backend.</p>
+
+    <label for="widgetId">Widget ID</label>
+    <input type="text" id="widgetId" placeholder="Click 'SecureOTPWidgetCGAY' in MSG91 dashboard to copy Widget ID" />
+
+    <label for="tokenAuth">Token Auth (or Auth Key)</label>
+    <input type="text" id="tokenAuth" value="580015ADeTZwDCXgNR6accbb38P1" />
+
+    <button type="button" onclick="launchOtpWidget()">1. Open MSG91 OTP Widget</button>
+
+    <div id="outputBox" class="output-box">
+      <div id="statusBadge" class="badge"></div>
+      <label for="accessToken">Access Token (single-use JWT)</label>
+      <textarea id="accessToken" rows="5" readonly></textarea>
+      
+      <button type="button" id="verifyBtn" style="background: #10b981;" onclick="verifyBackend()">2. Verify with Laravel Backend API</button>
+      <div id="backendResult" style="margin-top: 12px; font-size: 14px;"></div>
+      <pre id="rawDebug" style="background: #e2e8f0; padding: 10px; border-radius: 6px; font-size: 11px; max-height: 150px; overflow: auto; margin-top: 14px; white-space: pre-wrap;"></pre>
+    </div>
+  </div>
+
+  <script>
+    function launchOtpWidget() {
+      const widgetId = document.getElementById('widgetId').value.trim();
+      const tokenAuth = document.getElementById('tokenAuth').value.trim();
+
+      if (!widgetId) {
+        alert("Please enter your Widget ID first. Click on 'SecureOTPWidgetCGAY' in your MSG91 dashboard to find it.");
+        return;
+      }
+
+      const configuration = {
+        widgetId: widgetId,
+        tokenAuth: tokenAuth,
+        success: function (data) {
+          console.log("MSG91 Success response:", data);
+          
+          let token = '';
+          if (typeof data === 'string') {
+            token = data.trim();
+          } else if (data && typeof data === 'object') {
+            token = (data['access-token'] || data.message || data.token || data.accessToken || data.jwt || '').toString().trim();
+            if (!token) {
+              for (const key in data) {
+                if (typeof data[key] === 'string' && data[key].length > 20) {
+                  token = data[key];
+                  break;
+                }
+              }
+            }
+          }
+
+          document.getElementById('outputBox').style.display = 'block';
+          document.getElementById('statusBadge').className = 'badge badge-success';
+          document.getElementById('statusBadge').innerText = 'OTP Verified! Access Token Generated';
+          document.getElementById('accessToken').value = token;
+          document.getElementById('rawDebug').innerText = 'Raw MSG91 callback data:\n' + (typeof data === 'object' ? JSON.stringify(data, null, 2) : data);
+        },
+        failure: function (error) {
+          console.error("MSG91 Failure:", error);
+          document.getElementById('outputBox').style.display = 'block';
+          document.getElementById('statusBadge').className = 'badge badge-fail';
+          document.getElementById('statusBadge').innerText = 'Widget Verification Failed';
+          document.getElementById('accessToken').value = '';
+          document.getElementById('rawDebug').innerText = 'Failure reason:\n' + JSON.stringify(error, null, 2);
+        }
+      };
+
+      if (typeof window.initSendOTP === 'function') {
+        window.initSendOTP(configuration);
+      } else {
+        alert("MSG91 script did not load. Please check your internet connection or ad-blocker.");
+      }
+    }
+
+    async function verifyBackend() {
+      const token = document.getElementById('accessToken').value.trim();
+      const resEl = document.getElementById('backendResult');
+
+      if (!token || token === 'undefined') {
+        resEl.innerHTML = '<span style="color: red; font-weight: bold;">✖ Cannot verify: Access token is empty or undefined.</span>';
+        return;
+      }
+
+      resEl.innerHTML = '<em>Verifying token with backend...</em>';
+
+      try {
+        const response = await fetch('/api/test-msg91-verification', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({ access_token: token })
+        });
+
+        const data = await response.json();
+        if (response.ok && data.success) {
+          resEl.innerHTML = '<div style="color: green; font-weight: bold; margin-top: 8px;">✔ ' + data.message + 
+            (data.verified_phone ? '<br>Verified Phone: ' + data.verified_phone : '') + '</div>';
+        } else {
+          resEl.innerHTML = '<div style="color: red; font-weight: bold; margin-top: 8px;">✖ ' + (data.message || 'Verification failed') + '</div>';
+        }
+      } catch (err) {
+        resEl.innerHTML = '<div style="color: red;">Error contacting backend: ' + err.message + '</div>';
+      }
+    }
+  </script>
+</body>
+</html>
+

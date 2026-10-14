@@ -7,8 +7,151 @@ use Illuminate\Http\Request;
 
 class CustomerCartController extends Controller
 {
+
+    private const FOOD_GST_RATE = 5;
+    private const SERVICE_GST_RATE = 18;
+
+    private const DELIVERY_CHARGE = 9; // fallback for config('restaurant.delivery_charge')
+    private const PACKING_CHARGE = 10;
+    private const PLATFORM_FEE = 15;
+
+    // Public so offer price changes can refresh existing carts (RestaurantOfferService)
+    public function recalculateCartTotals($cart)
+{
+    // Recalculate food subtotal
+    $cart->subtotal = (float) $cart->items()->sum('total_price');
+
+    $settings = \App\Models\PlatformSetting::getSettings();
+
+    // Charges from configuration and settings
+    $cart->delivery_charge = config('restaurant.delivery_charge', self::DELIVERY_CHARGE);
+    $cart->packing_charge = self::PACKING_CHARGE;
+    $cart->platform_fee = (float) ($settings->platform_fee ?? self::PLATFORM_FEE);
+
+    // Small order fee: if subtotal is below configured threshold, apply extra fee
+    $smallOrderThreshold = (float) ($settings->small_order_threshold ?? 250.00);
+    $smallOrderFee = (float) ($settings->small_order_fee ?? 10.00);
+    $cart->small_order_fee = ($cart->subtotal > 0 && $cart->subtotal < $smallOrderThreshold)
+        ? $smallOrderFee
+        : 0.00;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Recalculate Coupon Discount
+    |--------------------------------------------------------------------------
+    */
+
+    $discount = 0;
+
+    if ($cart->coupon_code) {
+
+        $coupon = \App\Models\Coupon::query()
+            ->where('code', $cart->coupon_code)
+            ->where('is_active', true)
+            ->first();
+
+        if ($coupon) {
+
+            // Check minimum order amount
+            if ($cart->subtotal >= $coupon->min_order_amount) {
+
+                if ($coupon->discount_type === 'percentage') {
+
+                    $discount = round(
+                        ($cart->subtotal * $coupon->discount_value) / 100,
+                        2
+                    );
+
+                    // Maximum discount limit
+                    if ($coupon->max_discount_amount !== null) {
+                        $discount = min(
+                            $discount,
+                            $coupon->max_discount_amount
+                        );
+                    }
+
+                } else {
+
+                    // Fixed discount
+                    $discount = min(
+                        $coupon->discount_value,
+                        $cart->subtotal
+                    );
+                }
+
+            } else {
+
+                // Minimum order no longer satisfied
+                $cart->coupon_code = null;
+                $cart->discount_type = null;
+                $cart->discount_value = 0;
+            }
+
+        } else {
+
+            // Coupon no longer valid
+            $cart->coupon_code = null;
+            $cart->discount_type = null;
+            $cart->discount_value = 0;
+        }
+    }
+
+    $cart->discount = $discount;
+
+    /*
+    |--------------------------------------------------------------------------
+    | GST
+    |--------------------------------------------------------------------------
+    */
+
+    // Food GST is calculated after discount
+    $discountedFoodAmount =
+        $cart->subtotal - $cart->discount;
+
+    $foodGst = round(
+        ($discountedFoodAmount * self::FOOD_GST_RATE) / 100,
+        2
+    );
+
+    // Service GST
+    $deliveryGst = round(
+        ($cart->delivery_charge * self::SERVICE_GST_RATE) / 100,
+        2
+    );
+
+    $packingGst = round(
+        ($cart->packing_charge * self::SERVICE_GST_RATE) / 100,
+        2
+    );
+
+    $platformGst = round(
+        ($cart->platform_fee * self::SERVICE_GST_RATE) / 100,
+        2
+    );
+
+    // Total GST
+    $cart->tax =
+        $foodGst
+        + $deliveryGst
+        + $packingGst
+        + $platformGst;
+
+    // Final total
+    $cart->total_amount =
+        $cart->subtotal
+        + $cart->delivery_charge
+        + $cart->packing_charge
+        + $cart->platform_fee
+        + (float) ($cart->small_order_fee ?? 0.00)
+        + $cart->tax
+        - $cart->discount;
+
+    return $cart;
+}
+
    public function index(Request $request)
 {
+
     $customer = $request->user();
 
     $cart = \App\Models\CustomerCart::query()
@@ -28,6 +171,8 @@ class CustomerCartController extends Controller
             ],
         ], 200);
     }
+
+    $settings = \App\Models\PlatformSetting::getSettings();
 
     return response()->json([
         'success' => true,
@@ -54,15 +199,55 @@ class CustomerCartController extends Controller
                     ];
                 })->values(),
 
-                'subtotal' => $cart->subtotal,
-                'delivery_charge' => $cart->delivery_charge,
-                'packing_charge' => $cart->packing_charge,
-                'discount' => $cart->discount,
-                'tax' => $cart->tax,
-                'total_amount' => $cart->total_amount,
+                'subtotal' => (float) $cart->subtotal,
+                'delivery_charge' => (float) $cart->delivery_charge,
+                'packing_charge' => (float) $cart->packing_charge,
+                'platform_fee' => (float) $cart->platform_fee,
+                'small_order_fee' => (float) ($cart->small_order_fee ?? 0.00),
+                'discount' => (float) $cart->discount,
+                'tax' => (float) $cart->tax,
+                'total_amount' => (float) $cart->total_amount,
+
+                'checkout_rules' => [
+                    'min_order_value' => (float) ($settings->minimum_order_value ?? 99.00),
+                    'is_min_order_met' => (float) $cart->subtotal >= (float) ($settings->minimum_order_value ?? 99.00),
+                    'min_order_remaining' => max(0, round((float) ($settings->minimum_order_value ?? 99.00) - (float) $cart->subtotal, 2)),
+
+                    'small_order_threshold' => (float) ($settings->small_order_threshold ?? 250.00),
+                    'small_order_fee' => (float) ($settings->small_order_fee ?? 10.00),
+                    'has_small_order_fee' => (float) ($cart->small_order_fee ?? 0.00) > 0,
+                    'small_order_remaining' => (float) $cart->subtotal < (float) ($settings->small_order_threshold ?? 250.00)
+                        ? max(0, round((float) ($settings->small_order_threshold ?? 250.00) - (float) $cart->subtotal, 2))
+                        : 0.00,
+
+                    'free_delivery_above' => (float) ($settings->free_delivery_above ?? 499.00),
+                    'free_delivery_remaining' => max(0, round((float) ($settings->free_delivery_above ?? 499.00) - (float) $cart->subtotal, 2)),
+
+                    'is_cod_allowed' => (bool) (($settings->cod_enabled ?? true) && ((float) $cart->total_amount <= (float) ($settings->max_cod_order_amount ?? 2000.00))),
+                    'max_cod_order_amount' => (float) ($settings->max_cod_order_amount ?? 2000.00),
+                    'cod_enabled' => (bool) ($settings->cod_enabled ?? true),
+                    'online_payment_enabled' => (bool) ($settings->online_payment_enabled ?? true),
+                    'maintenance_mode' => (bool) ($settings->maintenance_mode ?? false),
+                ],
             ],
+
+            // Checkout Page Offer bought by THIS cart's restaurant only
+            'checkout_advertisement' => $this->checkoutAdvertisement($cart->restaurant_id),
         ],
     ], 200);
+}
+
+private function checkoutAdvertisement($restaurantId): ?array
+{
+    if (!$restaurantId) {
+        return null;
+    }
+
+    $advertisements = app(\App\Services\Restaurant\RestaurantAdvertisementService::class);
+
+    $ad = $advertisements->checkoutAdvertisement((int) $restaurantId);
+
+    return $ad ? $advertisements->formatForCustomer($ad) : null;
 }
 
 public function addItem(Request $request)
@@ -101,6 +286,10 @@ public function addItem(Request $request)
             'message' => 'Menu item not found or unavailable.',
         ], 404);
     }
+
+    // Make sure an offer that just started / ended is reflected
+    $menuItem = app(\App\Services\Restaurant\RestaurantOfferService::class)
+        ->syncMenuItem($menuItem->id);
 
     $unitPrice = $menuItem->discount_price !== null
         ? $menuItem->discount_price
@@ -157,19 +346,7 @@ public function addItem(Request $request)
         ]);
     }
 
-    $cart->subtotal = $cart->items()->sum('total_price');
-
-$cart->delivery_charge = $cart->delivery_charge ?? 0;
-$cart->packing_charge = $cart->packing_charge ?? 0;
-$cart->discount = $cart->discount ?? 0;
-$cart->tax = $cart->tax ?? 0;
-
-$cart->total_amount =
-    $cart->subtotal
-    + $cart->delivery_charge
-    + $cart->packing_charge
-    + $cart->tax
-    - $cart->discount;
+$cart = $this->recalculateCartTotals($cart);
 
     $cart->save();
 
@@ -204,6 +381,7 @@ $cart->total_amount =
                 'subtotal' => $cart->subtotal,
                 'delivery_charge' => $cart->delivery_charge,
                 'packing_charge' => $cart->packing_charge,
+                'platform_fee' => $cart->platform_fee,
                 'discount' => $cart->discount,
                 'tax' => $cart->tax,
                 'total_amount' => $cart->total_amount,
@@ -243,19 +421,7 @@ $cartItem->save();
 
 $cart = $cartItem->cart;
 
-$cart->subtotal = $cart->items()->sum('total_price');
-
-$cart->delivery_charge = $cart->delivery_charge ?? 0;
-$cart->packing_charge = $cart->packing_charge ?? 0;
-$cart->discount = $cart->discount ?? 0;
-$cart->tax = $cart->tax ?? 0;
-
-$cart->total_amount =
-    $cart->subtotal
-    + $cart->delivery_charge
-    + $cart->packing_charge
-    + $cart->tax
-    - $cart->discount;
+$cart = $this->recalculateCartTotals($cart);
 
 $cart->save();
 
@@ -293,6 +459,7 @@ return response()->json([
             'subtotal' => $cart->subtotal,
             'delivery_charge' => $cart->delivery_charge,
             'packing_charge' => $cart->packing_charge,
+            'platform_fee' => $cart->platform_fee,
             'discount' => $cart->discount,
             'tax' => $cart->tax,
             'total_amount' => $cart->total_amount,
@@ -324,19 +491,7 @@ $cart = $cartItem->cart;
 
 $cartItem->delete();
 
-$cart->subtotal = $cart->items()->sum('total_price');
-
-$cart->delivery_charge = $cart->delivery_charge ?? 0;
-$cart->packing_charge = $cart->packing_charge ?? 0;
-$cart->discount = $cart->discount ?? 0;
-$cart->tax = $cart->tax ?? 0;
-
-$cart->total_amount =
-    $cart->subtotal
-    + $cart->delivery_charge
-    + $cart->packing_charge
-    + $cart->tax
-    - $cart->discount;
+$cart = $this->recalculateCartTotals($cart);
 
 $remainingItems = $cart->items()->count();
 
@@ -388,12 +543,169 @@ return response()->json([
             'subtotal' => $cart->subtotal,
             'delivery_charge' => $cart->delivery_charge,
             'packing_charge' => $cart->packing_charge,
+            'platform_fee' => $cart->platform_fee,
             'discount' => $cart->discount,
             'tax' => $cart->tax,
             'total_amount' => $cart->total_amount,
         ],
     ],
 ], 200);
+}
+
+public function applyCoupon(Request $request)
+{
+    $customer = $request->user();
+
+    $validated = $request->validate([
+        'coupon_code' => ['required', 'string'],
+    ]);
+
+    $cart = \App\Models\CustomerCart::query()
+        ->where('customer_id', $customer->id)
+        ->first();
+
+    if (!$cart) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Cart is empty.',
+        ], 400);
+    }
+
+    $coupon = \App\Models\Coupon::query()
+        ->where('code', strtoupper(trim($validated['coupon_code'])))
+        ->where('is_active', true)
+        ->first();
+
+    if (!$coupon) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Invalid or inactive coupon.',
+        ], 422);
+    }
+
+    // Check coupon start date
+    if ($coupon->starts_at && now()->lt($coupon->starts_at)) {
+        return response()->json([
+            'success' => false,
+            'message' => 'This coupon is not active yet.',
+        ], 422);
+    }
+
+    // Check coupon expiry
+    if ($coupon->expires_at && now()->gt($coupon->expires_at)) {
+        return response()->json([
+            'success' => false,
+            'message' => 'This coupon has expired.',
+        ], 422);
+    }
+
+    // Coupon minimum order amount is checked against FOOD SUBTOTAL only
+    if ($cart->subtotal < $coupon->min_order_amount) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Minimum order amount for this coupon is ₹'
+                . number_format($coupon->min_order_amount, 2),
+        ], 422);
+    }
+
+    // Calculate discount ONLY on food subtotal
+    if ($coupon->discount_type === 'percentage') {
+
+        $discount = round(
+            ($cart->subtotal * $coupon->discount_value) / 100,
+            2
+        );
+
+        // Apply maximum discount limit if configured
+        if ($coupon->max_discount_amount !== null) {
+            $discount = min(
+                $discount,
+                $coupon->max_discount_amount
+            );
+        }
+
+    } else {
+
+        // Fixed discount
+        $discount = min(
+            $coupon->discount_value,
+            $cart->subtotal
+        );
+    }
+
+    $cart->coupon_code = $coupon->code;
+    $cart->discount_type = $coupon->discount_type;
+    $cart->discount_value = $coupon->discount_value;
+    $cart->discount = $discount;
+
+    /*
+    |--------------------------------------------------------------------------
+    | GST
+    |--------------------------------------------------------------------------
+    |
+    | Food GST is calculated AFTER discount.
+    | Delivery, packing and platform GST remain unchanged.
+    |
+    */
+
+    $discountedFoodAmount =
+        $cart->subtotal - $cart->discount;
+
+    $foodGst = round(
+        ($discountedFoodAmount * self::FOOD_GST_RATE) / 100,
+        2
+    );
+
+    $deliveryGst = round(
+        ($cart->delivery_charge * self::SERVICE_GST_RATE) / 100,
+        2
+    );
+
+    $packingGst = round(
+        ($cart->packing_charge * self::SERVICE_GST_RATE) / 100,
+        2
+    );
+
+    $platformGst = round(
+        ($cart->platform_fee * self::SERVICE_GST_RATE) / 100,
+        2
+    );
+
+    $cart->tax =
+        $foodGst
+        + $deliveryGst
+        + $packingGst
+        + $platformGst;
+
+    $cart->total_amount =
+        $cart->subtotal
+        + $cart->delivery_charge
+        + $cart->packing_charge
+        + $cart->platform_fee
+        + $cart->tax
+        - $cart->discount;
+
+    $cart->save();
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Coupon applied successfully.',
+        'data' => [
+            'cart' => [
+                'id' => $cart->id,
+                'subtotal' => $cart->subtotal,
+                'delivery_charge' => $cart->delivery_charge,
+                'packing_charge' => $cart->packing_charge,
+                'platform_fee' => $cart->platform_fee,
+                'coupon_code' => $cart->coupon_code,
+                'discount_type' => $cart->discount_type,
+                'discount_value' => $cart->discount_value,
+                'discount' => $cart->discount,
+                'tax' => $cart->tax,
+                'total_amount' => $cart->total_amount,
+            ],
+        ],
+    ], 200);
 }
 
 public function clear(Request $request)

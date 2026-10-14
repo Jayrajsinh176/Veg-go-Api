@@ -9,7 +9,7 @@ use App\Models\RiderKyc;
 use App\Models\RiderEarning;
 use App\Models\RiderWalletTransaction;
 use App\Services\Rider\RiderShiftService;
-use App\Models\RiderDailySettlement;
+use App\Models\RiderWeeklySettlement;
 use Carbon\Carbon;
 
 class RiderDashboardController extends Controller
@@ -796,14 +796,14 @@ public function wallet(Request $request)
     ->where('type', 'debit')
     ->sum('amount');
 
-    $pendingSettlement = RiderDailySettlement::where(
+    $pendingSettlement = RiderWeeklySettlement::where(
         'rider_id',
         $rider->id
     )
     ->where('status', 'pending')
     ->sum('total_amount');
 
-    $nextPayout = RiderDailySettlement::where(
+    $nextPayout = RiderWeeklySettlement::where(
         'rider_id',
         $rider->id
     )
@@ -812,10 +812,7 @@ public function wallet(Request $request)
     ->orderBy('payout_date')
     ->first();
 
-    $availableBalance = max(
-        0,
-        (float) $rider->wallet_balance - (float) $pendingSettlement
-    );
+  $availableBalance = (float) $rider->wallet_balance;
 
     return response()->json([
         'success' => true,
@@ -824,6 +821,7 @@ public function wallet(Request $request)
             'total_credit' => (float) $totalCredit,
             'total_debit' => (float) $totalDebit,
             'pending_settlement' => (float) $pendingSettlement,
+            'pending_cod' => (float) $rider->pending_cod,
             'available_balance' => $availableBalance,
             'next_payout_date' => $nextPayout?->payout_date?->format('Y-m-d'),
         ]
@@ -835,10 +833,23 @@ public function walletHistory(Request $request)
 {
     $rider = $request->user();
 
+    $request->validate([
+        'type' => 'nullable|in:credit,debit',
+        'from' => 'nullable|date',
+        'to' => 'nullable|date',
+        'settlement_id' => 'nullable|integer',
+    ]);
+
     $transactions = RiderWalletTransaction::where('rider_id', $rider->id)
+        ->when($request->type, fn ($query, $type) => $query->where('type', $type))
+        ->when($request->from, fn ($query, $from) => $query->whereDate('created_at', '>=', $from))
+        ->when($request->to, fn ($query, $to) => $query->whereDate('created_at', '<=', $to))
+        ->when($request->settlement_id, fn ($query, $id) => $query->where('settlement_id', $id))
         ->latest()
+        ->latest('id')
         ->get([
             'id',
+            'settlement_id',
             'type',
             'title',
             'amount',

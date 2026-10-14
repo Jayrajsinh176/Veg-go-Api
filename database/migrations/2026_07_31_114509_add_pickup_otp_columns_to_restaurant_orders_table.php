@@ -25,6 +25,14 @@ return new class extends Migration
               ->nullable()
               ->after('pickup_otp_generated_at');
 
+        $table->string('delivery_otp', 6)
+              ->nullable()
+              ->after('pickup_verified_at');
+
+        $table->timestamp('delivery_otp_expires_at')
+              ->nullable()
+              ->after('delivery_otp');
+
     });
 }
 

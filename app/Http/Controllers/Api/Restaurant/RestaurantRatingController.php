@@ -125,18 +125,20 @@ public function reviews(Request $request)
 {
     $restaurant = auth()->user();
 
-$reviews = RestaurantReview::with('reply')
+$reviews = RestaurantReview::with(['reply', 'customer'])
     ->where('restaurant_id', $restaurant->id)
     ->orderByDesc('created_at')
     ->paginate(10);
 
     $data = [
         'reviews' => $reviews->map(function ($review) {
+            $customerName = $review->customer?->name ?: 'Customer';
+
             return [
                 'id' => $review->id,
-                'customer_name' => 'Customer',
-                'customer_initial' => 'C',
-                'rating' => $review->rating,
+                'customer_name' => $customerName,
+                'customer_initial' => strtoupper(substr($customerName, 0, 1)),
+                'rating' => (int) $review->rating,
                 'review' => $review->review,
                 'time' => $review->created_at->diffForHumans(),
                 'helpful_count' => 0,

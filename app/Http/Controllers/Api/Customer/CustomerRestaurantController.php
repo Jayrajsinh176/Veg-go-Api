@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Models\Restaurant;
+use App\Services\Restaurant\RestaurantAdvertisementService;
 use Illuminate\Http\Request;
 
 class CustomerRestaurantController extends Controller
@@ -11,7 +12,7 @@ class CustomerRestaurantController extends Controller
     /**
      * Get all approved restaurants for customer.
      */
-    public function index(Request $request)
+    public function index(Request $request, RestaurantAdvertisementService $advertisements)
     {
         $restaurants = Restaurant::query()
             ->where('status', 'approved')
@@ -51,6 +52,9 @@ class CustomerRestaurantController extends Controller
             })
             ->values();
 
+        // Paid Featured Restaurants (Package 4) first, flagged is_featured
+        $restaurants = $advertisements->featuredFirst($restaurants);
+
         return response()->json([
             'success' => true,
             'message' => 'Restaurants fetched successfully.',
@@ -63,7 +67,7 @@ class CustomerRestaurantController extends Controller
     /**
  * Get approved restaurants by category.
  */
-public function byCategory(Request $request, $categoryId)
+public function byCategory(Request $request, $categoryId, RestaurantAdvertisementService $advertisements)
 {
     $restaurants = Restaurant::query()
         ->where('status', 'approved')
@@ -107,6 +111,8 @@ public function byCategory(Request $request, $categoryId)
             ];
         })
         ->values();
+
+    $restaurants = $advertisements->featuredFirst($restaurants);
 
     return response()->json([
         'success' => true,

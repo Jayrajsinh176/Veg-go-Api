@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Admin;
+use App\Models\AdminActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
@@ -28,6 +29,13 @@ class AdminAuthController extends Controller
             ]);
         }
 
+        // Role accounts sign in through the super admin panel only
+        if ($admin->isRoleAdmin()) {
+            return response()->json([
+                'message' => 'This account does not have access to the admin panel.',
+            ], 403);
+        }
+
         if ($admin->status !== 'active') {
             return response()->json([
                 'message' => 'Your admin account is inactive.',
@@ -43,6 +51,15 @@ class AdminAuthController extends Controller
         // Update last login
         $admin->update([
             'last_login_at' => now(),
+        ]);
+
+        AdminActivityLog::record($admin, $request, [
+            'action' => 'Admin Login',
+            'module' => 'Security',
+            'source' => 'Admin Authentication',
+            'change_summary' => 'Session: Signed Out → Signed In',
+            'details' => 'Administrator signed in to the admin panel.',
+            'review_status' => 'Reviewed',
         ]);
 
         return response()->json([

@@ -44,13 +44,6 @@ class RiderKycController extends Controller
         ], 400);
     }
 
-    if (!$rider->order_type_id) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Please select order type first',
-        ], 400);
-    }
-
     $kyc = RiderKyc::firstOrNew([
         'rider_id' => $rider->id,
     ]);
@@ -625,20 +618,6 @@ public function completeProfile(Request $request)
         return response()->json([
             'success' => false,
             'message' => 'Please select your vehicle type',
-        ], 400);
-    }
-
-    if (!$rider->work_zone_id) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Please select your work zone',
-        ], 400);
-    }
-
-    if (!$rider->order_type_id) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Please select an order type',
         ], 400);
     }
 

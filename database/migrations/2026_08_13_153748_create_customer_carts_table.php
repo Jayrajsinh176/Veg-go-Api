@@ -25,7 +25,11 @@ return new class extends Migration
             $table->decimal('subtotal', 10, 2)->default(0);
             $table->decimal('delivery_charge', 10, 2)->default(0);
             $table->decimal('packing_charge', 10, 2)->default(0);
+            $table->decimal('platform_fee', 10, 2)->default(0);
             $table->decimal('discount', 10, 2)->default(0);
+            $table->string('coupon_code', 100)->nullable();
+            $table->enum('discount_type', ['percentage', 'fixed'])->nullable();
+            $table->decimal('discount_value', 10, 2)->default(0);
             $table->decimal('tax', 10, 2)->default(0);
             $table->decimal('total_amount', 10, 2)->default(0);
 

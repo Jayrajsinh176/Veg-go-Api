@@ -20,4 +20,11 @@ class RiderSupportTicket extends Model
     {
         return $this->belongsTo(Rider::class);
     }
+
+    public function messages(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(SupportTicketMessage::class, 'ticket_id')
+            ->where('ticket_type', 'rider')
+            ->orderBy('created_at');
+    }
 }

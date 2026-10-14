@@ -38,6 +38,7 @@ class RestaurantNotificationController extends Controller
                     'order' => RestaurantNotification::where('restaurant_id', $restaurant->id)->where('type', 'order')->count(),
                     'payment' => RestaurantNotification::where('restaurant_id', $restaurant->id)->where('type', 'payment')->count(),
                     'review' => RestaurantNotification::where('restaurant_id', $restaurant->id)->where('type', 'review')->count(),
+                    'promotion' => RestaurantNotification::where('restaurant_id', $restaurant->id)->where('type', 'promotion')->count(),
                 ],
 
                 'notifications' => $notifications,

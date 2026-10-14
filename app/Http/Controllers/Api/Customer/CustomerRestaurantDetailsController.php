@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Models\Restaurant;
+use App\Models\RestaurantMenuItem;
 use Illuminate\Http\Request;
 use App\Models\RestaurantOrderItem;
+use App\Services\Restaurant\RestaurantAdvertisementService;
 use Illuminate\Support\Facades\DB;
 
 class CustomerRestaurantDetailsController extends Controller
@@ -55,6 +57,7 @@ class CustomerRestaurantDetailsController extends Controller
                                 'description' => $item->description,
                                 'price' => $item->price,
                                 'discount_price' => $item->discount_price,
+                                'offer_label' => $item->offer_label,
                                 'image' => $item->image,
                                 'is_recommended' => (bool) $item->is_recommended,
                             ];
@@ -86,9 +89,83 @@ class CustomerRestaurantDetailsController extends Controller
                     ],
 
                     'categories' => $categories,
+
+                    'recommended_items' =>
+                        $this->recommendedFrom($categories),
                 ],
             ],
         ], 200);
+    }
+
+    /**
+     * Get recommended items of a restaurant for customer.
+     */
+    public function recommended(Request $request, $id)
+    {
+        $restaurant = Restaurant::query()
+            ->where('id', $id)
+            ->where('status', 'approved')
+            ->first();
+
+        if (!$restaurant) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Restaurant not found.',
+            ], 404);
+        }
+
+        $items = RestaurantMenuItem::query()
+            ->where('restaurant_id', $id)
+            ->where('is_recommended', true)
+            ->where('is_active', true)
+            ->where('is_available', true)
+            ->whereHas('category', function ($query) {
+                $query->where('is_active', true);
+            })
+            ->with('category:id,name')
+            ->latest('id')
+            ->get()
+            ->map(function ($item) {
+                return [
+                    'id' => $item->id,
+                    'category_id' => $item->category_id,
+                    'category_name' => $item->category?->name,
+                    'name' => $item->name,
+                    'description' => $item->description,
+                    'price' => $item->price,
+                    'discount_price' => $item->discount_price,
+                    'offer_label' => $item->offer_label,
+                    'image' => $item->image,
+                    'is_recommended' => true,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Recommended items fetched successfully.',
+            'data' => [
+                'restaurant_id' => (int) $id,
+                'items' => $items,
+            ],
+        ], 200);
+    }
+
+    /**
+     * Pick recommended items out of an already-built category list.
+     */
+    private function recommendedFrom($categories)
+    {
+        return collect($categories)
+            ->flatMap(function ($category) {
+                return collect($category['menu_items'])
+                    ->filter(fn ($item) => $item['is_recommended'])
+                    ->map(fn ($item) => $item + [
+                        'category_id' => $category['id'],
+                        'category_name' => $category['name'],
+                    ]);
+            })
+            ->values();
     }
 
     public function bestSellers(Request $request, $id)
@@ -239,6 +316,7 @@ $categories = $restaurant->categories
                         'description' => $item->description,
                         'price' => $item->price,
                         'discount_price' => $item->discount_price,
+                        'offer_label' => $item->offer_label,
                         'image' => $item->image,
                         'is_recommended' => (bool) $item->is_recommended,
                     ];
@@ -254,6 +332,7 @@ return response()->json([
     'data' => [
         'restaurant_id' => (int) $id,
         'categories' => $categories,
+        'recommended_items' => $this->recommendedFrom($categories),
     ],
 ], 200);
 }
@@ -300,6 +379,7 @@ $menuItems = \App\Models\RestaurantMenuItem::query()
             'description' => $item->description,
             'price' => $item->price,
             'discount_price' => $item->discount_price,
+            'offer_label' => $item->offer_label,
             'image' => $item->image,
             'is_recommended' => (bool) $item->is_recommended,
         ];
@@ -357,6 +437,7 @@ $menuItems = \App\Models\RestaurantMenuItem::query()
             'description' => $item->description,
             'price' => $item->price,
             'discount_price' => $item->discount_price,
+            'offer_label' => $item->offer_label,
             'image' => $item->image,
             'is_recommended' => (bool) $item->is_recommended,
         ];
@@ -380,7 +461,7 @@ return response()->json([
 /**
  * Get menu item details for customer.
  */
-public function menuItem(Request $request, $id, $itemId)
+public function menuItem(Request $request, $id, $itemId, RestaurantAdvertisementService $advertisements)
 {
    $restaurant = Restaurant::query()
     ->where('id', $id)
@@ -424,10 +505,15 @@ return response()->json([
             'description' => $item->description,
             'price' => $item->price,
             'discount_price' => $item->discount_price,
+            'offer_label' => $item->offer_label,
             'image' => $item->image,
             'is_recommended' => (bool) $item->is_recommended,
             'is_available' => (bool) $item->is_available,
         ],
+        // Paid Food Item Promotion for this exact item, or null
+        'advertisement' => ($ad = $advertisements->foodItemAdvertisement($item->id))
+            ? $advertisements->formatForCustomer($ad)
+            : null,
     ],
 ], 200);
 }

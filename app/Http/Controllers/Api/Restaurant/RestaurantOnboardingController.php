@@ -14,6 +14,8 @@ use App\Models\RestaurantPartnerContract;
 use App\Models\RestaurantCategory;
 use App\Models\RestaurantMenuItem;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 use Carbon\Carbon;
 
 class RestaurantOnboardingController extends Controller
@@ -261,6 +263,11 @@ public function getOutletTypes(Request $request)
 
 public function saveDocuments(Request $request)
 {
+    $restaurant = $request->user();
+    $existingDocument = RestaurantDocument::where('restaurant_id', $restaurant->id)->first();
+    $outletType = RestaurantOutletType::find($request->input('outlet_type_id'));
+    $requiresGst = $outletType?->code === 'category_1';
+
     $validator = Validator::make($request->all(), [
         'outlet_type_id' => 'required|exists:restaurant_outlet_types,id',
         'pan_number' => 'required|string|max:20',
@@ -268,6 +275,25 @@ public function saveDocuments(Request $request)
         'upi_id' => 'required|string|max:100',
         'upi_holder_name' => 'required|string|max:100',
         'fssai_number' => 'required|string|max:50',
+        'pan_image' => [
+            Rule::requiredIf(!$existingDocument?->pan_image_path),
+            'file',
+            'mimes:jpg,jpeg,png,pdf',
+            'max:5120',
+        ],
+        'gst_image' => [
+            Rule::requiredIf($requiresGst && !$existingDocument?->gst_image_path),
+            'nullable',
+            'file',
+            'mimes:jpg,jpeg,png,pdf',
+            'max:5120',
+        ],
+        'fssai_image' => [
+            Rule::requiredIf(!$existingDocument?->fssai_image_path),
+            'file',
+            'mimes:jpg,jpeg,png,pdf',
+            'max:5120',
+        ],
     ]);
 
     if ($validator->fails()) {
@@ -278,27 +304,52 @@ public function saveDocuments(Request $request)
         ], 422);
     }
 
-    $restaurant = $request->user();
+    $validated = $validator->validated();
+    $uploadedPaths = [];
 
-RestaurantDocument::updateOrCreate(
-    [
-        'restaurant_id' => $restaurant->id,
-    ],
-    [
-        'outlet_type_id' => $request->outlet_type_id,
-        'pan_number' => $request->pan_number,
-        'gstin_number' => $request->gstin_number,
-        'upi_id' => $request->upi_id,
-        'upi_holder_name' => $request->upi_holder_name,
-        'fssai_number' => $request->fssai_number,
+    try {
+        foreach (['pan_image', 'gst_image', 'fssai_image'] as $field) {
+            if ($request->hasFile($field)) {
+                $path = $request->file($field)->store('restaurants/documents', 'public');
+                if ($path === false) {
+                    throw new \RuntimeException("Unable to store {$field}.");
+                }
 
-        // Reset review when documents are submitted/re-submitted
-        'status' => 'pending',
-        'rejection_reason' => null,
-        'reviewed_at' => null,
-        'reviewed_by' => null,
-    ]
-);
+                $uploadedPaths[$field] = $path;
+            }
+        }
+
+        DB::transaction(function () use ($restaurant, $validated, $existingDocument, $uploadedPaths) {
+            RestaurantDocument::updateOrCreate(
+                [
+                    'restaurant_id' => $restaurant->id,
+                ],
+                [
+                    'outlet_type_id' => $validated['outlet_type_id'],
+                    'pan_number' => $validated['pan_number'],
+                    'pan_image_path' => $uploadedPaths['pan_image'] ?? $existingDocument?->pan_image_path,
+                    'gstin_number' => $validated['gstin_number'] ?? null,
+                    'gst_image_path' => $uploadedPaths['gst_image'] ?? $existingDocument?->gst_image_path,
+                    'upi_id' => $validated['upi_id'],
+                    'upi_holder_name' => $validated['upi_holder_name'],
+                    'fssai_number' => $validated['fssai_number'],
+                    'fssai_image_path' => $uploadedPaths['fssai_image'] ?? $existingDocument?->fssai_image_path,
+
+                    // Reset review when documents are submitted/re-submitted
+                    'status' => 'pending',
+                    'rejection_reason' => null,
+                    'reviewed_at' => null,
+                    'reviewed_by' => null,
+                ]
+            );
+        });
+    } catch (\Throwable $exception) {
+        if ($uploadedPaths) {
+            Storage::disk('public')->delete(array_values($uploadedPaths));
+        }
+
+        throw $exception;
+    }
 
     $restaurant->update([
         'onboarding_step' => 6,
@@ -336,15 +387,31 @@ public function getDocuments(Request $request)
     ],
 
     'pan_number' => $document->pan_number,
+    'pan_image_url' => $this->documentUrl($document->pan_image_path),
     'gstin_number' => $document->gstin_number,
+    'gst_image_url' => $this->documentUrl($document->gst_image_path),
     'upi_id' => $document->upi_id,
     'upi_holder_name' => $document->upi_holder_name,
     'fssai_number' => $document->fssai_number,
+    'fssai_image_url' => $this->documentUrl($document->fssai_image_path),
 
     'status' => $document->status,
     'rejection_reason' => $document->rejection_reason,
 ],
     ]);
+}
+
+private function documentUrl(?string $path): ?string
+{
+    if (!$path) {
+        return null;
+    }
+
+    if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
+        return $path;
+    }
+
+    return asset('storage/' . ltrim($path, '/'));
 }
 
 public function saveRestaurantName(Request $request)

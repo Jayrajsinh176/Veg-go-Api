@@ -7,11 +7,23 @@ return [
     | Restaurant Commission
     |--------------------------------------------------------------------------
     |
-    | VegGo currently charges 20% commission.
-    | Restaurant receives the remaining 80%.
+    | VegGo currently charges 30% commission by default.
+    | Restaurant receives the remaining 70%.
+    | Admin can set a different rate per restaurant (restaurants.commission_percentage).
     |
     */
 
-    'commission_percentage' => 20.00,
+    'commission_percentage' => 30.00,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delivery Charge
+    |--------------------------------------------------------------------------
+    |
+    | Flat delivery fee (in rupees) added to every customer cart.
+    |
+    */
+
+    'delivery_charge' => 9,
 
 ];

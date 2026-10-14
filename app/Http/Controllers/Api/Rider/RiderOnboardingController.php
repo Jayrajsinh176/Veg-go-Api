@@ -6,8 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\City;
 use App\Models\CityArea;
 use App\Models\VehicleType;
-use App\Models\OrderType;
-use App\Models\WorkZone;
+// use App\Models\OrderType;
+// use App\Models\WorkZone;
 use App\Models\DeliveryKit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -325,165 +325,165 @@ public function vehicleTypes()
     ]);
 }
 
-    public function workZones(Request $request)
-{
-    $rider = $request->user();
+//     public function workZones(Request $request)
+// {
+//     $rider = $request->user();
 
-    if (!$rider->city_id) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Please select your work city first',
-        ], 400);
-    }
+//     if (!$rider->city_id) {
+//         return response()->json([
+//             'success' => false,
+//             'message' => 'Please select your work city first',
+//         ], 400);
+//     }
 
-    $zones = WorkZone::where('city_id', $rider->city_id)
-        ->where('is_active', true)
-        ->select(
-            'id',
-            'name',
-            'minimum_guarantee',
-            'weekly_earning_upto',
-            'is_best_zone'
-        )
-        ->orderByDesc('is_best_zone')
-        ->orderBy('name')
-        ->get();
+//     $zones = WorkZone::where('city_id', $rider->city_id)
+//         ->where('is_active', true)
+//         ->select(
+//             'id',
+//             'name',
+//             'minimum_guarantee',
+//             'weekly_earning_upto',
+//             'is_best_zone'
+//         )
+//         ->orderByDesc('is_best_zone')
+//         ->orderBy('name')
+//         ->get();
 
-    return response()->json([
-        'success' => true,
-        'zones' => $zones,
-    ]);
-}
+//     return response()->json([
+//         'success' => true,
+//         'zones' => $zones,
+//     ]);
+// }
 
-public function selectWorkZone(Request $request)
-{
-    $validator = Validator::make($request->all(), [
-        'work_zone_id' => [
-            'required',
-            'integer',
-            'exists:work_zones,id',
-        ],
-    ]);
+// public function selectWorkZone(Request $request)
+// {
+//     $validator = Validator::make($request->all(), [
+//         'work_zone_id' => [
+//             'required',
+//             'integer',
+//             'exists:work_zones,id',
+//         ],
+//     ]);
 
-    if ($validator->fails()) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Validation failed',
-            'errors' => $validator->errors(),
-        ], 422);
-    }
+//     if ($validator->fails()) {
+//         return response()->json([
+//             'success' => false,
+//             'message' => 'Validation failed',
+//             'errors' => $validator->errors(),
+//         ], 422);
+//     }
 
-    $rider = $request->user();
+//     $rider = $request->user();
 
-    $zone = WorkZone::where('id', $request->work_zone_id)
-        ->where('city_id', $rider->city_id)
-        ->where('is_active', true)
-        ->first();
+//     $zone = WorkZone::where('id', $request->work_zone_id)
+//         ->where('city_id', $rider->city_id)
+//         ->where('is_active', true)
+//         ->first();
 
-    if (!$zone) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Selected work zone is not available for your city',
-        ], 400);
-    }
+//     if (!$zone) {
+//         return response()->json([
+//             'success' => false,
+//             'message' => 'Selected work zone is not available for your city',
+//         ], 400);
+//     }
 
-    $rider->update([
-        'work_zone_id' => $zone->id,
-    ]);
+//     $rider->update([
+//         'work_zone_id' => $zone->id,
+//     ]);
 
-    return response()->json([
-        'success' => true,
-        'message' => 'Work zone selected successfully',
-        'work_zone' => [
-            'id' => $zone->id,
-            'name' => $zone->name,
-            'minimum_guarantee' => $zone->minimum_guarantee,
-            'weekly_earning_upto' => $zone->weekly_earning_upto,
-        ],
-    ]);
-}
+//     return response()->json([
+//         'success' => true,
+//         'message' => 'Work zone selected successfully',
+//         'work_zone' => [
+//             'id' => $zone->id,
+//             'name' => $zone->name,
+//             'minimum_guarantee' => $zone->minimum_guarantee,
+//             'weekly_earning_upto' => $zone->weekly_earning_upto,
+//         ],
+//     ]);
+// }
 
-public function orderTypes(Request $request)
-{
-    $rider = $request->user();
+// public function orderTypes(Request $request)
+// {
+//     $rider = $request->user();
 
-    if (!$rider->work_zone_id) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Please select your work zone first',
-        ], 400);
-    }
+//     if (!$rider->work_zone_id) {
+//         return response()->json([
+//             'success' => false,
+//             'message' => 'Please select your work zone first',
+//         ], 400);
+//     }
 
-    $orderTypes = OrderType::where('is_active', true)
-        ->select(
-            'id',
-            'name',
-            'code',
-            'description',
-            'minimum_guarantee',
-            'image',
-            'is_limited_offer'
-        )
-        ->get();
+//     $orderTypes = OrderType::where('is_active', true)
+//         ->select(
+//             'id',
+//             'name',
+//             'code',
+//             'description',
+//             'minimum_guarantee',
+//             'image',
+//             'is_limited_offer'
+//         )
+//         ->get();
 
-    return response()->json([
-        'success' => true,
-        'order_types' => $orderTypes,
-    ]);
-}
+//     return response()->json([
+//         'success' => true,
+//         'order_types' => $orderTypes,
+//     ]);
+// }
 
-public function selectOrderType(Request $request)
-{
-    $validator = Validator::make($request->all(), [
-        'order_type_id' => [
-            'required',
-            'integer',
-            'exists:order_types,id',
-        ],
-    ]);
+// public function selectOrderType(Request $request)
+// {
+//     $validator = Validator::make($request->all(), [
+//         'order_type_id' => [
+//             'required',
+//             'integer',
+//             'exists:order_types,id',
+//         ],
+//     ]);
 
-    if ($validator->fails()) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Validation failed',
-            'errors' => $validator->errors(),
-        ], 422);
-    }
+//     if ($validator->fails()) {
+//         return response()->json([
+//             'success' => false,
+//             'message' => 'Validation failed',
+//             'errors' => $validator->errors(),
+//         ], 422);
+//     }
 
-    $rider = $request->user();
+//     $rider = $request->user();
 
-    if (!$rider->work_zone_id) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Please select your work zone first',
-        ], 400);
-    }
+//     if (!$rider->work_zone_id) {
+//         return response()->json([
+//             'success' => false,
+//             'message' => 'Please select your work zone first',
+//         ], 400);
+//     }
 
-    $orderType = OrderType::where('id', $request->order_type_id)
-        ->where('is_active', true)
-        ->first();
+//     $orderType = OrderType::where('id', $request->order_type_id)
+//         ->where('is_active', true)
+//         ->first();
 
-    if (!$orderType) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Selected order type is not available',
-        ], 400);
-    }
+//     if (!$orderType) {
+//         return response()->json([
+//             'success' => false,
+//             'message' => 'Selected order type is not available',
+//         ], 400);
+//     }
 
-    $rider->update([
-        'order_type_id' => $orderType->id,
-    ]);
+//     $rider->update([
+//         'order_type_id' => $orderType->id,
+//     ]);
 
-    return response()->json([
-        'success' => true,
-        'message' => 'Order type selected successfully',
-        'order_type' => [
-            'id' => $orderType->id,
-            'name' => $orderType->name,
-            'code' => $orderType->code,
-        ],
-    ]);
-}
+//     return response()->json([
+//         'success' => true,
+//         'message' => 'Order type selected successfully',
+//         'order_type' => [
+//             'id' => $orderType->id,
+//             'name' => $orderType->name,
+//             'code' => $orderType->code,
+//         ],
+//     ]);
+// }
 
 public function deliveryKits(Request $request)
 {
@@ -561,7 +561,8 @@ public function selectDeliveryKit(Request $request)
 
     $rider->update([
         'delivery_kit_id' => $kit->id,
-        'delivery_kit_completed' => true,
+        'delivery_kit_completed' => false,
+        'onboarding_completed' => false,
     ]);
 
     return response()->json([
@@ -575,7 +576,7 @@ public function selectDeliveryKit(Request $request)
             'full_tshirt_quantity' => $kit->full_tshirt_quantity,
             'bag_quantity' => $kit->bag_quantity,
         ],
-        'delivery_kit_completed' => true,
+        'delivery_kit_completed' => false,
         'next_step' => 'tshirt_size',
     ]);
 }
@@ -780,13 +781,13 @@ $rider->update([
     'delivery_bag_amount' => 999.00,
     'delivery_bag_payment_status' => 'pending',
     'delivery_kit_completed' => true,
-    'onboarding_completed' => false,
+    'onboarding_completed' => true,
 ]);
 
 return response()->json([
     'success' => true,
-    'message' => 'Delivery kit selected successfully. ₹999 payment is pending.',
-    'onboarding_completed' => false,
+    'message' => 'Onboarding completed. ₹999 payment is pending.',
+    'onboarding_completed' => true,
     'delivery_kit_completed' => true,
     'rider_status' => $rider->status,
 

@@ -54,6 +54,8 @@ class CustomerFavoriteFoodController extends Controller
                         'name' => $food?->name,
                         'description' => $food?->description,
                         'price' => $sellingPrice,
+                        'original_price' => $food?->price,
+                        'offer_label' => $food?->offer_label,
                         'image' => $food?->image,
                         'is_available' => (bool) $food?->is_available,
                         'is_recommended' => (bool) $food?->is_recommended,

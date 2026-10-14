@@ -47,7 +47,7 @@ class RestaurantDashboardController extends Controller
 // Restaurant cannot go offline if active orders exist
 if (!$request->is_online) {
 
-    $hasActiveOrders = RestaurantOrder::where('restaurant_id', $restaurant->id)
+    $hasActiveOrders = RestaurantOrder::where('restaurant_id', $restaurant->id)->visibleToRestaurant()
         ->whereIn('order_status', [
             'pending',
             'accepted',

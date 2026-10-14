@@ -34,10 +34,13 @@ return new class extends Migration
         $table->enum('status', [
             'available',
             'accepted',
+            'arrived',
             'picked_up',
             'delivered',
             'cancelled',
         ])->default('available');
+
+        $table->string('restaurant_status', 50)->nullable();
 
         $table->timestamps();
 

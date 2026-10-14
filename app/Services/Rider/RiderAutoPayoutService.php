@@ -2,129 +2,84 @@
 
 namespace App\Services\Rider;
 
-use App\Models\RiderDailySettlement;
-use App\Models\RiderWalletTransaction;
-use App\Models\RiderUpiDetail;
-use App\Models\RiderBankDetail;
+use App\Models\Rider;
+use App\Models\RiderWeeklySettlement;
+use App\Support\SettlementSchedule;
 use Illuminate\Support\Facades\DB;
 
 class RiderAutoPayoutService
 {
+    public function __construct(
+        protected RiderSettlementService $settlementService
+    ) {
+    }
+
+    /**
+     * Pays out every Wednesday-to-Wednesday cycle that has closed, from the
+     * Thursday-morning payout time onwards
+     */
     public function processDueSettlements(): int
     {
+        $this->openClosedCycle();
 
-$settlements = RiderDailySettlement::where('status', 'pending')
-    ->whereDate('payout_date', '<=', today())
-    ->orderBy('id')
-    ->get();
+        $settlements = RiderWeeklySettlement::where('status', 'pending')
+            ->whereDate('payout_date', '<=', SettlementSchedule::dueDate())
+            ->orderBy('week_start')
+            ->orderBy('id')
+            ->get();
 
         $processedCount = 0;
 
-    foreach ($settlements as $settlement) {
+        foreach ($settlements as $settlement) {
 
-    DB::transaction(function () use (
-        $settlement,
-        &$processedCount
-    ) {
+            DB::transaction(function () use ($settlement, &$processedCount) {
 
-        $settlement = RiderDailySettlement::where(
-            'id',
-            $settlement->id
-        )
-        ->lockForUpdate()
-        ->first();
+                $settlement = RiderWeeklySettlement::where('id', $settlement->id)
+                    ->lockForUpdate()
+                    ->first();
 
-        if (!$settlement || $settlement->status !== 'pending') {
-            return;
-        }
-
-        $settlement->update([
-            'status' => 'processing',
-        ]);
-
-                $rider = $settlement->rider;
-
-                if (!$rider) {
-                    $settlement->update([
-                        'status' => 'failed',
-                        'remarks' => 'Rider not found.',
-                    ]);
-
+                if (!$settlement || $settlement->status !== 'pending') {
                     return;
                 }
 
-                if ($settlement->total_amount <= 0) {
-                    $settlement->update([
-                        'status' => 'failed',
-                        'remarks' => 'Settlement amount must be greater than zero.',
-                    ]);
+                // Admin has put this rider's payouts on hold
+                $onHold = RiderWeeklySettlement::where('rider_id', $settlement->rider_id)
+                    ->where('status', 'processing')
+                    ->exists();
 
+                if ($onHold) {
                     return;
                 }
 
-                if ($rider->wallet_balance < $settlement->total_amount) {
-                    $settlement->update([
-                        'status' => 'failed',
-                        'remarks' => 'Insufficient wallet balance.',
-                    ]);
+                $settlement = $this->settlementService->payout($settlement);
 
-                    return;
+                if ($settlement->status === 'successful') {
+                    $processedCount++;
                 }
-
-                $upi = RiderUpiDetail::where('rider_id', $rider->id)
-    ->where('is_verified', true)
-    ->first();
-
-$bank = RiderBankDetail::where('rider_id', $rider->id)
-    ->where('is_verified', true)
-    ->first();
-
-if (!$upi && !$bank) {
-    $settlement->update([
-        'status' => 'failed',
-        'remarks' => 'No verified UPI or bank account found.',
-    ]);
-
-    return;
-}
-
-$payoutMethod = $upi ? 'upi' : 'bank';
-                /*
-                 * REAL BANK/UPI PAYMENT WILL BE CONNECTED LATER.
-                 *
-                 * For now, we only simulate a successful payout.
-                 */
-
-                $rider->decrement(
-                    'wallet_balance',
-                    $settlement->total_amount
-                );
-
-                $rider->refresh();
-
-                RiderWalletTransaction::create([
-                    'rider_id' => $rider->id,
-                    'type' => 'debit',
-                    'amount' => $settlement->total_amount,
-                    'balance_after' => $rider->wallet_balance,
-                    'title' => 'Automatic Payout',
-                    'description' => 'Automatic payout for settlement date ' .
-                        $settlement->settlement_date->format('Y-m-d'),
-                    'reference_type' => 'daily_settlement',
-                    'reference_id' => $settlement->id,
-                ]);
-
-                $settlement->update([
-                    'status' => 'successful',
-                   'payout_reference' => 'TEST-' . strtoupper($payoutMethod) . '-' . $settlement->id . '-' . time(),
-                    'processed_at' => now(),
-                    'remarks' => 'Test automatic payout processed successfully via ' . strtoupper($payoutMethod) . '.',
-                ]);
-
-                $processedCount++;
             });
         }
 
         return $processedCount;
+    }
+
+    /**
+     * Riders whose earlier payout failed but who had no activity in the cycle
+     * that just closed still get a settlement row for it, so the carried
+     * balance is retried this Wednesday.
+     */
+    private function openClosedCycle(): void
+    {
+        $cycle = $this->settlementService->cycleFor(now()->subWeek());
+
+        Rider::query()
+            ->where('wallet_balance', '>', 0)
+            ->whereHas('weeklySettlements', fn ($query) => $query->where('status', 'failed'))
+            ->whereNotExists(function ($query) use ($cycle) {
+                $query->select(DB::raw(1))
+                    ->from('rider_weekly_settlements')
+                    ->whereColumn('rider_weekly_settlements.rider_id', 'riders.id')
+                    ->whereDate('rider_weekly_settlements.week_start', $cycle['week_start']->toDateString());
+            })
+            ->each(fn (Rider $rider) => $this->settlementService->settlementFor($rider, $cycle['week_start']));
     }
 }

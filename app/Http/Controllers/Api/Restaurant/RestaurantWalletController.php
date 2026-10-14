@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api\Restaurant;
 
 use App\Http\Controllers\Controller;
 use App\Models\RestaurantWalletTransaction;
+use App\Services\Restaurant\RestaurantSettlementService;
+use App\Support\SettlementSchedule;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 
@@ -64,11 +66,22 @@ class RestaurantWalletController extends Controller
                 'created_at',
             ]);
 
+        // Weekly settlement (Monday to Monday, paid Tuesday morning)
+        $settlementService = app(RestaurantSettlementService::class);
+        $cycle = $settlementService->cycleFor();
+
         return response()->json([
             'success' => true,
             'message' => 'Wallet details fetched successfully.',
             'data' => [
                 'balance' => (float) $balance,
+
+                'settlement' => [
+                    'week_start' => $cycle['week_start']->toDateString(),
+                    'week_end' => $cycle['week_end']->toDateString(),
+                    'next_payout_at' => SettlementSchedule::payoutAt($cycle['payout_date'])->toDateTimeString(),
+                    'upi_id' => $settlementService->payoutUpi($restaurant),
+                ],
 
                 'summary' => [
                     'today' => (float) $today,

@@ -30,7 +30,8 @@ class AuthenticateAdmin
 
         $admin = $accessToken->tokenable;
 
-        if (!$admin instanceof Admin) {
+        // Role accounts (Roles & Permissions page) cannot use the /admin panel
+        if (!$admin instanceof Admin || $admin->isRoleAdmin()) {
             return response()->json([
                 'message' => 'Unauthorized admin access.',
             ], 403);

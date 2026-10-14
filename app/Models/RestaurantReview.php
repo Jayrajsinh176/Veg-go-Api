@@ -25,8 +25,12 @@ class RestaurantReview extends Model
     }
 
     public function reply()
-{
-    return $this->hasOne(RestaurantReviewReply::class, 'restaurant_review_id');
-}
+    {
+        return $this->hasOne(RestaurantReviewReply::class, 'restaurant_review_id');
+    }
 
+    public function customer()
+    {
+        return $this->belongsTo(Customer::class, 'customer_id');
+    }
 }

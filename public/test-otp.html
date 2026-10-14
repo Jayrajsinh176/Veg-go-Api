@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VegGo OTP API Tester</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f1f5f9;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+    }
+    .card {
+      background: #ffffff;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+      max-width: 500px;
+      width: 100%;
+    }
+    h2 { margin-top: 0; color: #0f172a; }
+    p { color: #64748b; font-size: 14px; margin-bottom: 20px; }
+    label { font-weight: 600; font-size: 13px; color: #334155; display: block; margin-top: 14px; margin-bottom: 6px; }
+    select, input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    button {
+      margin-top: 15px;
+      width: 100%;
+      padding: 12px;
+      background: #16a34a;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    button:hover { background: #15803d; }
+    button.verify { background: #2563eb; }
+    button.verify:hover { background: #1d4ed8; }
+    pre {
+      background: #0f172a;
+      color: #38bdf8;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      overflow-x: auto;
+      margin-top: 14px;
+      white-space: pre-wrap;
+    }
+    .step-box {
+      border: 1px solid #e2e8f0;
+      padding: 16px;
+      border-radius: 8px;
+      margin-top: 14px;
+      background: #f8fafc;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>VegGo Mobile OTP Tester</h2>
+    <p>Test the exact endpoints that your Flutter developer will use.</p>
+
+    <label for="role">User Role</label>
+    <select id="role">
+      <option value="customer">Customer (/api/customer/auth/...)</option>
+      <option value="rider">Rider (/api/rider/auth/...)</option>
+    </select>
+
+    <div class="step-box">
+      <h3>Step 1: Send OTP</h3>
+      <label for="phone">Phone Number (10 digits)</label>
+      <input type="text" id="phone" value="9876543210" placeholder="e.g. 9876543210" />
+
+      <button type="button" onclick="sendOtp()">Send OTP</button>
+    </div>
+
+    <div class="step-box" id="verifyBox" style="display: none;">
+      <h3>Step 2: Verify OTP</h3>
+      <label for="otp">Enter Received 6-Digit OTP</label>
+      <input type="text" id="otp" placeholder="Enter OTP" />
+
+      <button type="button" class="verify" onclick="verifyOtp()">Verify & Login</button>
+    </div>
+
+    <label>Response Output</label>
+    <pre id="output">Waiting for request...</pre>
+  </div>
+
+  <script>
+    async function sendOtp() {
+      const role = document.getElementById('role').value;
+      const phone = document.getElementById('phone').value.trim();
+      const output = document.getElementById('output');
+      
+      output.innerText = 'Sending request to /api/' + role + '/auth/send-otp ...';
+
+      try {
+        const response = await fetch('/api/' + role + '/auth/send-otp', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({ phone: phone })
+        });
+
+        const data = await response.json();
+        output.innerText = JSON.stringify(data, null, 2);
+
+        if (response.ok && data.success) {
+          const generatedOtp = data.otp || (data.data && data.data.otp);
+          if (generatedOtp) {
+            document.getElementById('otp').value = generatedOtp;
+          }
+          document.getElementById('verifyBox').style.display = 'block';
+        }
+      } catch (err) {
+        output.innerText = 'Error: ' + err.message;
+      }
+    }
+
+    async function verifyOtp() {
+      const role = document.getElementById('role').value;
+      const phone = document.getElementById('phone').value.trim();
+      const otp = document.getElementById('otp').value.trim();
+      const output = document.getElementById('output');
+
+      output.innerText = 'Sending request to /api/' + role + '/auth/verify-otp ...';
+
+      const payload = { phone: phone, otp: otp };
+      if (role === 'rider') {
+        payload.language = 'en';
+      }
+
+      try {
+        const response = await fetch('/api/' + role + '/auth/verify-otp', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+        output.innerText = JSON.stringify(data, null, 2);
+      } catch (err) {
+        output.innerText = 'Error: ' + err.message;
+      }
+    }
+  </script>
+</body>
+</html>
+

@@ -1,0 +1,47 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VegGo PayU Sandbox Test</title>
+</head>
+<body>
+    <h2>VegGo PayU Sandbox Test</h2>
+    <p>Enter the values from the latest successful initiation API response.</p>
+
+    <form action="https://test.payu.in/_payment" method="post">
+        <label>Key</label><br>
+        <input name="key" required><br><br>
+
+        <label>Transaction ID</label><br>
+        <input name="txnid" required><br><br>
+
+        <label>Amount</label><br>
+        <input name="amount" value="400.00" required><br><br>
+
+        <label>Product Info</label><br>
+        <input name="productinfo" value="VegGo Order 16" required><br><br>
+
+        <label>First Name</label><br>
+        <input name="firstname" required><br><br>
+
+        <label>Email</label><br>
+        <input name="email" type="email" required><br><br>
+
+        <label>Phone</label><br>
+        <input name="phone" required><br><br>
+
+        <label>Success URL</label><br>
+        <input name="surl" required><br><br>
+
+        <label>Failure URL</label><br>
+        <input name="furl" required><br><br>
+
+        <label>Request Hash</label><br>
+        <input name="hash" required><br><br>
+
+        <button type="submit">Proceed to PayU Sandbox</button>
+    </form>
+</body>
+</html>

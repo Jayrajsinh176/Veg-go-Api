@@ -8,6 +8,7 @@ class RiderWalletTransaction extends Model
 {
     protected $fillable = [
         'rider_id',
+        'settlement_id',
         'type',
         'amount',
         'balance_after',
@@ -25,5 +26,10 @@ class RiderWalletTransaction extends Model
     public function rider()
     {
         return $this->belongsTo(Rider::class);
+    }
+
+    public function settlement()
+    {
+        return $this->belongsTo(RiderWeeklySettlement::class, 'settlement_id');
     }
 }

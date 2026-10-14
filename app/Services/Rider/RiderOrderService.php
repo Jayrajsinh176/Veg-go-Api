@@ -11,16 +11,20 @@ use App\Models\RiderReferral;
 use Illuminate\Http\Request;
 use App\Services\Rider\RiderEarningService;
 use App\Models\RestaurantOrder;
-use App\Models\RiderDailySettlement;
+use App\Models\RiderWeeklySettlement;
+
 
 
 class RiderOrderService
 {
         protected RiderEarningService $earningService;
- 
-        public function __construct(RiderEarningService $earningService)
+
+        protected RiderSettlementService $settlementService;
+
+        public function __construct(RiderEarningService $earningService, RiderSettlementService $settlementService)
 {
     $this->earningService = $earningService;
+    $this->settlementService = $settlementService;
 }
 
    public function acceptOrder(Rider $rider, DeliveryOrder $order)
@@ -57,6 +61,20 @@ class RiderOrderService
         ], 400);
     }
 
+    // Rider cannot accept new orders if pending COD has reached the limit
+if ((float) $rider->pending_cod >= 2500) {
+    return response()->json([
+        'success' => false,
+        'message' => 'Your pending COD amount has reached the ₹2500 limit. Please settle your COD amount before accepting a new order.',
+        'pending_cod' => (float) $rider->pending_cod,
+        'cod_limit' => 2500,
+    ], 400);
+}
+
+    if ($order->status === 'cancelled') {
+        return $this->orderCancelledResponse();
+    }
+
     // Order should be available
     if ($order->status !== 'available') {
         return response()->json([
@@ -73,7 +91,41 @@ class RiderOrderService
         ], 409);
     }
 
-    DB::transaction(function () use ($rider, $order) {
+    /*
+     * Many nearby riders are notified at once, so re-check everything
+     * under row locks: only one of them can get the order. Lock order:
+     * restaurant order -> delivery order -> rider (same as cancellation).
+     */
+    $failure = DB::transaction(function () use ($rider, $order) {
+
+        $lockedRestaurantOrder = RestaurantOrder::where('order_number', $order->order_number)
+            ->lockForUpdate()
+            ->first();
+
+        $lockedOrder = DeliveryOrder::whereKey($order->id)->lockForUpdate()->first();
+
+        Rider::whereKey($rider->id)->lockForUpdate()->first();
+
+        if (
+            $lockedOrder?->status === 'cancelled' ||
+            $lockedRestaurantOrder?->order_status === 'cancelled'
+        ) {
+            return 'cancelled';
+        }
+
+        if (!$lockedOrder || $lockedOrder->status !== 'available' || $lockedOrder->rider_id !== null) {
+            return 'taken';
+        }
+
+        $hasActiveOrder = DeliveryOrder::where('rider_id', $rider->id)
+            ->whereIn('status', ['accepted', 'arrived', 'picked_up'])
+            ->exists();
+
+        if ($hasActiveOrder) {
+            return 'busy';
+        }
+
+        $order->setRawAttributes($lockedOrder->getAttributes(), true);
 
         /*
          * Update delivery_orders
@@ -91,10 +143,58 @@ class RiderOrderService
             ->update([
                 'rider_id' => $rider->id,
             ]);
+
+        /*
+         * P0 Fix: If the restaurant already marked the order as
+         * ready_for_pickup (before any rider accepted), the pickup_otp
+         * was saved on restaurant_orders but never copied to
+         * delivery_orders. Sync it now so the rider can verify pickup.
+         */
+        $restaurantOrder = RestaurantOrder::where(
+            'order_number',
+            $order->order_number
+        )->first();
+
+        if (
+            $restaurantOrder &&
+            !empty($restaurantOrder->pickup_otp) &&
+            empty($order->pickup_otp)
+        ) {
+            $order->pickup_otp = $restaurantOrder->pickup_otp;
+            $order->pickup_otp_expires_at = $restaurantOrder->pickup_otp_generated_at
+                ? $restaurantOrder->pickup_otp_generated_at->addMinutes(30)
+                : null;
+            $order->restaurant_status = $restaurantOrder->order_status;
+            $order->save();
+        }
+
+        return null;
     });
+
+    if ($failure === 'cancelled') {
+        return $this->orderCancelledResponse();
+    }
+
+    if ($failure === 'taken') {
+        return response()->json([
+            'success' => false,
+            'message' => 'Order is no longer available.',
+        ], 409);
+    }
+
+    if ($failure === 'busy') {
+        return response()->json([
+            'success' => false,
+            'message' => 'Complete your current order before accepting a new order.',
+        ], 400);
+    }
 
     // Refresh order after transaction
     $order->refresh();
+
+    // Notify customer and restaurant that rider accepted the order
+    $restaurantOrder = RestaurantOrder::where('order_number', $order->order_number)->first();
+    app(\App\Services\Notification\OrderNotificationService::class)->riderAssigned($order, $restaurantOrder, $rider);
 
     $order->load('payment');
 
@@ -130,12 +230,12 @@ class RiderOrderService
                 'longitude' => $order->delivery_longitude,
             ],
 
-          'payment' => [
-    'method' => $order->payment_method,
-    'status' => $order->payment_status,
-    'amount' => $order->total_amount,
-    'cod_amount' => $order->payment_method === 'cash'
-        ? $order->total_amount
+'payment' => [
+    'method' => optional($order->payment)->payment_method,
+    'status' => optional($order->payment)->payment_status,
+    'amount' => optional($order->payment)->order_amount,
+    'cod_amount' => optional($order->payment)->payment_method === 'COD'
+        ? optional($order->payment)->cod_amount
         : null,
 ],
 
@@ -401,6 +501,10 @@ public function verifyPickupOtp(Rider $rider, DeliveryOrder $order, Request $req
         ], 403);
     }
 
+    if ($order->status === 'cancelled') {
+        return $this->orderCancelledResponse();
+    }
+
     // Order must be in arrived status
     if ($order->status !== 'arrived') {
         return response()->json([
@@ -452,7 +556,31 @@ if ($order->pickup_verified_at) {
 // Mark pickup verified
 $verifiedAt = now();
 
-DB::transaction(function () use ($order, $verifiedAt) {
+/*
+ * Re-check under row locks so an admin cancel that landed after the
+ * checks above is not overwritten. Lock order: restaurant order ->
+ * delivery order (same as cancellation).
+ */
+$failure = DB::transaction(function () use ($order, $verifiedAt) {
+
+    $lockedRestaurantOrder = RestaurantOrder::where('order_number', $order->order_number)
+        ->lockForUpdate()
+        ->first();
+
+    $lockedOrder = DeliveryOrder::whereKey($order->id)->lockForUpdate()->first();
+
+    if (
+        $lockedOrder?->status === 'cancelled' ||
+        $lockedRestaurantOrder?->order_status === 'cancelled'
+    ) {
+        return 'cancelled';
+    }
+
+    if (!$lockedOrder || $lockedOrder->status !== 'arrived' || $lockedOrder->pickup_verified_at) {
+        return 'verified';
+    }
+
+    $order->setRawAttributes($lockedOrder->getAttributes(), true);
 
     // Update delivery_orders
     $order->pickup_verified_at = $verifiedAt;
@@ -465,7 +593,20 @@ DB::transaction(function () use ($order, $verifiedAt) {
 
     $order->save();
 
-    // Sync restaurant_orders
+    /*
+     * P0 Fix: Generate Delivery OTP now, at the moment of pickup,
+     * instead of waiting for the customer to open the order detail
+     * screen. This prevents the rider arriving at the customer's
+     * doorstep and being told "Delivery OTP is not generated yet".
+     */
+    $deliveryOtp = str_pad(
+        random_int(1000, 9999),
+        4,
+        '0',
+        STR_PAD_LEFT
+    );
+
+    // Sync restaurant_orders + generate delivery OTP in one update
     RestaurantOrder::where(
         'order_number',
         $order->order_number
@@ -474,10 +615,28 @@ DB::transaction(function () use ($order, $verifiedAt) {
         'order_status' => 'picked_up',
         'picked_up_at' => $verifiedAt,
         'pickup_verified_at' => $verifiedAt,
+        'delivery_otp' => $deliveryOtp,
+        'delivery_otp_expires_at' => $verifiedAt->copy()->addMinutes(30),
     ]);
+
+    return null;
 });
 
+if ($failure === 'cancelled') {
+    return $this->orderCancelledResponse();
+}
+
+if ($failure === 'verified') {
+    return response()->json([
+        'success' => false,
+        'message' => 'Pickup has already been verified.'
+    ], 400);
+}
+
 $order->refresh();
+
+// Notify customer and restaurant that order was picked up
+app(\App\Services\Notification\OrderNotificationService::class)->orderPickedUp($order, null, $rider);
 
 return response()->json([
     'success' => true,
@@ -661,7 +820,7 @@ public function verifyDeliveryOtp(
     ]);
 }
 
-public function deliverOrder(Rider $rider, DeliveryOrder $order)
+public function deliverOrder(Rider $rider,DeliveryOrder $order,Request $request)
 {
     // Check ownership
     if ($order->rider_id !== $rider->id) {
@@ -687,9 +846,58 @@ if (!$order->delivery_verified_at) {
     ], 400);
 }
 
+// Validate payment collection method
+$request->validate([
+    'payment_method' => 'required|in:cash,upi',
+]);
+
+// Load payment details
+$order->load('payment');
+
+$payment = $order->payment;
+
+if (!$payment) {
+    return response()->json([
+        'success' => false,
+        'message' => 'Payment details not found for this order.'
+    ], 400);
+}
+
     DB::beginTransaction();
 
     try {
+
+    // Handle COD payment collection
+if ($payment->payment_method === 'COD') {
+
+    $collectionMethod = $request->payment_method;
+
+    // If customer paid cash, add COD amount to rider's pending COD
+  if ($collectionMethod === 'cash') {
+
+    $codAmount = (float) $payment->cod_amount;
+
+    if ($codAmount <= 0) {
+        throw new \Exception('Invalid COD amount.');
+    }
+
+    $currentPendingCod = (float) $rider->pending_cod;
+
+    // Maximum pending COD allowed is ₹2500
+    if (($currentPendingCod + $codAmount) > 2500) {
+        throw new \Exception(
+            'This COD collection would exceed your ₹2500 pending COD limit. Please settle your pending COD amount first.'
+        );
+    }
+
+    $rider->increment('pending_cod', $codAmount);
+}
+
+    // Mark COD payment as paid
+    $payment->payment_status = 'PAID';
+    $payment->paid_at = now();
+    $payment->save();
+}
 
     $distance = $this->calculateDistance(
     $order->pickup_latitude,
@@ -718,6 +926,13 @@ RestaurantOrder::where(
     'delivered_at' => $deliveredAt,
 ]);
 
+// Order delivered: credit the restaurant's earning to its wallet
+$restaurantOrder = RestaurantOrder::where('order_number', $order->order_number)->first();
+
+if ($restaurantOrder) {
+    app(\App\Services\Restaurant\RestaurantEarningService::class)->credit($restaurantOrder);
+}
+
         // Check if earning already exists
         $alreadyExists = RiderEarning::where(
             'delivery_order_id',
@@ -735,57 +950,18 @@ RestaurantOrder::where(
     'description' => 'Earnings for Order #' . $order->order_number,
 ]);
 
-$settlementDate = $deliveredAt->toDateString();
-
-$payoutDate = $deliveredAt
-    ->copy()
-    ->addDays(3)
-    ->toDateString();
-
-$settlement = RiderDailySettlement::firstOrCreate(
-    [
-        'rider_id' => $rider->id,
-        'settlement_date' => $settlementDate,
-    ],
-    [
-        'total_amount' => 0,
-        'payout_date' => $payoutDate,
-        'status' => 'pending',
-    ]
+// Credit wallet + this Wednesday-to-Wednesday cycle's settlement
+$this->settlementService->record(
+    $rider,
+    'credit',
+    $earning['total_amount'],
+    'Delivery Earnings',
+    'Wallet credited for Order #' . $order->order_number,
+    'delivery_order',
+    $order->id,
+    $this->settlementService->settlementFor($rider, $deliveredAt),
+    isEarning: true,
 );
-
-$settlement->increment(
-    'total_amount',
-    $earning['total_amount']
-);
-
-\Log::info('DAILY SETTLEMENT CREATED', [
-    'rider_id' => $rider->id,
-    'settlement_date' => $settlementDate,
-    'payout_date' => $payoutDate,
-    'amount' => $earning['total_amount'],
-]);
-
-// Update wallet
-$rider->increment(
-    'wallet_balance',
-    $earning['total_amount']
-);
-
-// Refresh rider to get updated balance
-$rider->refresh();
-
-// Save wallet transaction
-RiderWalletTransaction::create([
-    'rider_id' => $rider->id,
-    'type' => 'credit',
-    'amount' => $earning['total_amount'],
-    'balance_after' => $rider->wallet_balance,
-    'title' => 'Delivery Earnings',
-    'description' => 'Wallet credited for Order #' . $order->order_number,
-    'reference_type' => 'delivery_order',
-    'reference_id' => $order->id,
-]);
 
 // Check if this rider joined using a referral code
 $referral = RiderReferral::where('referred_rider_id', $rider->id)
@@ -807,20 +983,16 @@ if ($referral->completed_orders >= 10) {
 
     if ($referrer) {
 
-        $referrer->increment('wallet_balance', $bonus);
-
-        $referrer->refresh();
-
-        RiderWalletTransaction::create([
-            'rider_id' => $referrer->id,
-            'type' => 'credit',
-            'amount' => $bonus,
-            'balance_after' => $referrer->wallet_balance,
-            'title' => 'Referral Reward',
-            'description' => 'Referral reward for inviting a rider who completed 10 deliveries.',
-            'reference_type' => 'referral',
-            'reference_id' => $referral->id,
-        ]);
+        $this->settlementService->record(
+            $referrer,
+            'credit',
+            $bonus,
+            'Referral Reward',
+            'Referral reward for inviting a rider who completed 10 deliveries.',
+            'referral',
+            $referral->id,
+            isEarning: true,
+        );
     }
 
     $referral->update([
@@ -832,6 +1004,9 @@ if ($referral->completed_orders >= 10) {
         }
 
         DB::commit();
+
+        // Notify customer, restaurant and rider about successful delivery
+        app(\App\Services\Notification\OrderNotificationService::class)->orderDelivered($order, $restaurantOrder, $rider);
 
         return response()->json([
             'success' => true,
@@ -890,6 +1065,9 @@ public function arrivedAtRestaurant(Rider $rider, DeliveryOrder $order)
 
     $order->refresh();
 
+    // Notify restaurant that rider has arrived
+    app(\App\Services\Notification\OrderNotificationService::class)->riderArrived($order, null, $rider);
+
     return response()->json([
         'success' => true,
         'message' => 'Arrived at restaurant successfully.',
@@ -905,4 +1083,85 @@ public function arrivedAtRestaurant(Rider $rider, DeliveryOrder $order)
     ]);
 }
 
+public function cancelOrder(Rider $rider, DeliveryOrder $order, Request $request)
+{
+    // Check ownership
+    if ($order->rider_id !== $rider->id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Unauthorized access to this order.',
+        ], 403);
+    }
+
+    // If order is already picked up, rider cannot drop it via this API
+    if ($order->status === 'picked_up' || $order->status === 'delivered') {
+        return response()->json([
+            'success' => false,
+            'message' => 'Order has already been picked up. Please contact rider support for assistance.',
+        ], 422);
+    }
+
+    if (!in_array($order->status, ['accepted', 'arrived'], true)) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Only accepted or arrived orders can be unassigned.',
+        ], 422);
+    }
+
+    $request->validate([
+        'reason' => 'required|string|max:255',
+    ]);
+
+    $reason = $request->string('reason')->toString();
+
+    DB::transaction(function () use ($order, $rider, $reason) {
+        // Reset the delivery order back to available so other riders can accept
+        $order->update([
+            'rider_id'    => null,
+            'status'      => 'available',
+            'accepted_at' => null,
+            'arrived_at'  => null,
+        ]);
+
+        // Unlink rider from restaurant order
+        $restaurantOrder = RestaurantOrder::where('order_number', $order->order_number)->first();
+
+        if ($restaurantOrder) {
+            $restaurantOrder->update([
+                'rider_id' => null,
+            ]);
+
+            \App\Models\OrderStatusHistory::create([
+                'order_id'   => $restaurantOrder->id,
+                'status'     => $restaurantOrder->order_status,
+                'changed_by' => 'rider',
+                'remarks'    => 'Delivery partner ' . ($rider->name ?? ('#' . $rider->id)) . ' unassigned from order. Reason: ' . $reason,
+            ]);
+        }
+    });
+
+    $order->refresh();
+
+    // Notify restaurant that rider unassigned from the order
+    app(\App\Services\Notification\OrderNotificationService::class)->riderUnassigned($order, null, $rider, $reason);
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Order unassigned successfully. The order is now available for other delivery partners.',
+        'data' => [
+            'order_number' => $order->order_number,
+            'status'       => $order->status,
+            'rider_id'     => $order->rider_id,
+        ],
+    ], 200);
 }
+
+private function orderCancelledResponse()
+{
+    return response()->json([
+        'success' => false,
+        'message' => 'This order has been cancelled.',
+    ], 400);
+}
+
+}

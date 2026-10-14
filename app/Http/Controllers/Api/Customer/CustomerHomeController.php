@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Customer;
 use App\Http\Controllers\Controller;
 use App\Models\Restaurant;
 use App\Models\RestaurantCategory;
+use App\Services\Restaurant\RestaurantAdvertisementService;
 use Illuminate\Http\Request;
 
 class CustomerHomeController extends Controller
@@ -12,7 +13,7 @@ class CustomerHomeController extends Controller
     /**
      * Customer home screen.
      */
-    public function index(Request $request)
+    public function index(Request $request, RestaurantAdvertisementService $advertisements)
     {
         $customer = $request->user();
 
@@ -90,6 +91,23 @@ class CustomerHomeController extends Controller
 
         /*
         |--------------------------------------------------------------------------
+        | Paid Advertisements
+        |--------------------------------------------------------------------------
+        | Featured restaurants (Package 4) go first in the list, Home banners
+        | (Package 1) and promoted food items (Package 2) get their own sections.
+        */
+        $restaurants = $advertisements->featuredFirst($restaurants);
+
+        $homeAdvertisements = $advertisements->homeAdvertisements()
+            ->map(fn ($ad) => $advertisements->formatForCustomer($ad))
+            ->values();
+
+        $promotedFoodItems = $advertisements->promotedFoodItems()
+            ->map(fn ($ad) => $advertisements->formatForCustomer($ad))
+            ->values();
+
+        /*
+        |--------------------------------------------------------------------------
         | Response
         |--------------------------------------------------------------------------
         */
@@ -110,6 +128,12 @@ class CustomerHomeController extends Controller
                 ] : null,
 
                 'categories' => $categories,
+
+                'home_advertisements' => $homeAdvertisements,
+
+                'promoted_food_items' => $promotedFoodItems,
+
+                'featured_restaurants' => $restaurants->where('is_featured', true)->values(),
 
                 'restaurants' => $restaurants,
             ],

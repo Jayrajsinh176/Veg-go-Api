@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Models\Restaurant;
 use App\Models\RestaurantOtp;
 use Carbon\Carbon;
+use App\Services\Msg91OtpService;
 
 class RestaurantAuthController extends Controller
 {
@@ -75,6 +76,15 @@ if ($restaurant && $restaurant->status === 'inactive') {
     ], 403);
 }
 
+    // Block restaurants suspended by admin until the suspension is lifted
+if ($restaurant && $restaurant->status === 'suspended') {
+    return response()->json([
+        'success' => false,
+        'is_suspended' => true,
+        'message' => 'Your restaurant account has been suspended by admin. Please contact support.',
+    ], 403);
+}
+
     // If Restaurant Does Not Exist, Create New Restaurant
     if (!$restaurant) {
 
@@ -112,6 +122,84 @@ $token = $restaurant->createToken('restaurant-token')->plainTextToken;
     ], 200);
 }
 
+/**
+ * Log in or register restaurant partner using MSG91 verified access token.
+ */
+public function msg91Login(Request $request, Msg91OtpService $msg91)
+{
+    $request->validate([
+        'access_token' => ['required', 'string', 'max:10000'],
+    ]);
+
+    $result = $msg91->verifyAccessToken($request->access_token);
+
+    if (!$result) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Invalid or expired MSG91 access token.',
+        ], 422);
+    }
+
+    $rawPhone = (string) ($result['message'] ?? '');
+    $mobile = substr(preg_replace('/\D/', '', $rawPhone), -10);
+
+    if (strlen($mobile) !== 10) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Invalid mobile number received from MSG91.',
+        ], 422);
+    }
+
+    $restaurant = Restaurant::where('mobile', $mobile)->first();
+
+    // Block deactivated restaurant accounts
+    if ($restaurant && $restaurant->status === 'inactive') {
+        return response()->json([
+            'success' => false,
+            'message' => 'Your restaurant account has been deactivated.',
+        ], 403);
+    }
+
+    // Block restaurants suspended by admin
+    if ($restaurant && $restaurant->status === 'suspended') {
+        return response()->json([
+            'success' => false,
+            'is_suspended' => true,
+            'message' => 'Your restaurant account has been suspended by admin. Please contact support.',
+        ], 403);
+    }
+
+    if (!$restaurant) {
+        $restaurant = Restaurant::create([
+            'mobile' => $mobile,
+            'status' => 'draft',
+            'onboarding_step' => 1,
+            'is_profile_completed' => false,
+        ]);
+
+        $isNewRestaurant = true;
+    } else {
+        $isNewRestaurant = false;
+    }
+
+    // Delete Old Tokens
+    $restaurant->tokens()->delete();
+
+    // Generate New Sanctum Token
+    $token = $restaurant->createToken('restaurant-token')->plainTextToken;
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Login successful.',
+        'token' => $token,
+        'is_new_restaurant' => $isNewRestaurant,
+        'restaurant' => $restaurant,
+        'next_screen' => $isNewRestaurant
+            ? 'restaurant_information'
+            : 'dashboard',
+    ], 200);
+}
+
 public function resendOtp(Request $request)
 {
     // Validate Request
@@ -133,11 +221,8 @@ $otp = $this->generateAndSaveOtp($request->mobile);
 
 private function generateAndSaveOtp($mobile)
 {
-    // Development OTP
-    $otp = '123456';
-
-    // Production OTP
-    // $otp = rand(100000, 999999);
+    // Generate a random 6-digit OTP
+    $otp = (string) random_int(100000, 999999);
 
     // Delete Previous OTP
     RestaurantOtp::where('mobile', $mobile)->delete();

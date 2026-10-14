@@ -10,10 +10,13 @@ protected $fillable = [
     'restaurant_id',
     'outlet_type_id',
     'pan_number',
+    'pan_image_path',
     'gstin_number',
+    'gst_image_path',
     'upi_id',
     'upi_holder_name',
     'fssai_number',
+    'fssai_image_path',
 
     'status',
     'rejection_reason',

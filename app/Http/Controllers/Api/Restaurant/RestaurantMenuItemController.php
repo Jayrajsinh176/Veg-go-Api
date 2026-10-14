@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Restaurant;
 use App\Http\Controllers\Controller;
 use App\Models\RestaurantCategory;
 use App\Models\RestaurantMenuItem;
+use App\Services\Restaurant\RestaurantOfferService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
@@ -155,11 +156,15 @@ public function update(Request $request, RestaurantMenuItem $menuItem)
     $menuItem->name = $request->name;
     $menuItem->description = $request->description;
     $menuItem->price = $request->price;
-    $menuItem->discount_price = $request->discount_price;
+    // Keeps a running admin offer price intact
+    $menuItem->setOwnDiscountPrice($request->discount_price);
     $menuItem->is_available = $request->boolean('is_available', true);
     $menuItem->is_recommended = $request->boolean('is_recommended', false);
 
     $menuItem->save();
+
+    // Re-apply offer on the (possibly new) price
+    $menuItem = app(RestaurantOfferService::class)->syncMenuItem($menuItem->id);
 
     return response()->json([
         'success' => true,
@@ -237,6 +242,10 @@ public function duplicate(Request $request, RestaurantMenuItem $menuItem)
   $newItem = $menuItem->replicate();
 
 $newItem->name = $menuItem->name . ' (Copy)';
+$newItem->discount_price = $menuItem->ownDiscountPrice();
+$newItem->regular_discount_price = null;
+$newItem->active_offer_id = null;
+$newItem->offer_label = null;
 $newItem->is_active = true;
 $newItem->created_at = now();
 $newItem->updated_at = now();
@@ -297,7 +306,9 @@ $unavailableItems = $totalItems - $availableItems;
         'name' => $item->name,
         'description' => $item->description,
         'price' => $item->price,
-        'discount_price' => $item->discount_price,
+        'discount_price' => $item->ownDiscountPrice(),
+        'offer_price' => $item->active_offer_id ? $item->discount_price : null,
+        'offer_label' => $item->offer_label,
         'image' => $item->image,
         'is_available' => (bool) $item->is_available,
         'is_recommended' => (bool) $item->is_recommended,
@@ -376,7 +387,9 @@ public function show(Request $request, RestaurantMenuItem $menuItem)
             'name' => $menuItem->name,
             'description' => $menuItem->description,
             'price' => $menuItem->price,
-            'discount_price' => $menuItem->discount_price,
+            'discount_price' => $menuItem->ownDiscountPrice(),
+            'offer_price' => $menuItem->active_offer_id ? $menuItem->discount_price : null,
+            'offer_label' => $menuItem->offer_label,
             'image' => $menuItem->image,
             'is_available' => (bool) $menuItem->is_available,
             'is_recommended' => (bool) $menuItem->is_recommended,

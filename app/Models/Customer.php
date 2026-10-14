@@ -11,23 +11,24 @@ class Customer extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
 
-protected $fillable = [
-    'phone',
-    'name',
-    'email',
-    'date_of_birth',
-    'profile_photo',
-    'push_notifications_enabled',
-];
+    protected $fillable = [
+        'phone',
+        'name',
+        'email',
+        'date_of_birth',
+        'profile_photo',
+        'push_notifications_enabled',
+        'status',
+    ];
 
     protected $hidden = [
         'remember_token',
     ];
 
-  protected $casts = [
-    'phone_verified_at' => 'datetime',
-    'push_notifications_enabled' => 'boolean',
-];
+    protected $casts = [
+        'phone_verified_at' => 'datetime',
+        'push_notifications_enabled' => 'boolean',
+    ];
 
     public function otps()
     {
@@ -35,23 +36,32 @@ protected $fillable = [
     }
 
     public function addresses()
-{
-    return $this->hasMany(CustomerAddress::class);
-}
+    {
+        return $this->hasMany(CustomerAddress::class);
+    }
 
-public function favoriteRestaurants()
-{
-    return $this->hasMany(CustomerFavoriteRestaurant::class);
-}
+    public function favoriteRestaurants()
+    {
+        return $this->hasMany(CustomerFavoriteRestaurant::class);
+    }
 
-public function favoriteFoods()
-{
-    return $this->hasMany(CustomerFavoriteFood::class);
-}
+    public function favoriteFoods()
+    {
+        return $this->hasMany(CustomerFavoriteFood::class);
+    }
 
-public function notifications()
-{
-    return $this->hasMany(CustomerNotification::class);
-}
+    public function notifications()
+    {
+        return $this->hasMany(CustomerNotification::class);
+    }
 
+    public function orders()
+    {
+        return $this->hasMany(RestaurantOrder::class);
+    }
+
+    public function supportTickets()
+    {
+        return $this->hasMany(CustomerSupportTicket::class);
+    }
 }

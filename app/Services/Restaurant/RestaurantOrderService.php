@@ -5,7 +5,8 @@ namespace App\Services\Restaurant;
 use App\Models\OrderStatusHistory;
 use App\Models\RestaurantOrder;
 use App\Models\DeliveryOrder;
-use App\Models\RestaurantWalletTransaction;
+use App\Models\OrderPayment;
+use App\Services\Order\OrderCancellationService;
 use Illuminate\Support\Facades\DB;
 
 use Illuminate\Http\Request;
@@ -22,7 +23,7 @@ public function index(Request $request)
     $query = RestaurantOrder::with([
         'items',
         'payment',
-    ])->where('restaurant_id', $restaurant->id);
+    ])->where('restaurant_id', $restaurant->id)->visibleToRestaurant();
 
     if ($request->filled('status')) {
         $query->where('order_status', $request->status);
@@ -45,7 +46,7 @@ public function index(Request $request)
         'items',
         'payment',
     ])
-    ->where('restaurant_id', $restaurant->id)
+    ->where('restaurant_id', $restaurant->id)->visibleToRestaurant()
     ->where('order_status', 'pending')
   ->orderBy('placed_at', 'asc')
     ->get();
@@ -65,7 +66,7 @@ public function preparing(Request $request)
         'items',
         'payment',
     ])
-    ->where('restaurant_id', $restaurant->id)
+    ->where('restaurant_id', $restaurant->id)->visibleToRestaurant()
     ->whereIn('order_status', [
         'accepted',
         'preparing',
@@ -89,7 +90,7 @@ $order = RestaurantOrder::with([
     'payment',
     'statusHistories',
 ])
-->where('restaurant_id', $restaurant->id)
+->where('restaurant_id', $restaurant->id)->visibleToRestaurant()
 ->findOrFail($orderId);
 
     return response()->json([
@@ -103,7 +104,7 @@ public function accept(Request $request, $orderId)
 {
     $restaurant = $request->user();
 
-    $order = RestaurantOrder::where('restaurant_id', $restaurant->id)
+    $order = RestaurantOrder::where('restaurant_id', $restaurant->id)->visibleToRestaurant()
         ->with([
             'restaurant.address',
             'customer',
@@ -116,7 +117,9 @@ public function accept(Request $request, $orderId)
 
         return response()->json([
             'success' => false,
-            'message' => 'Only pending orders can be accepted.',
+            'message' => $order->order_status === 'cancelled'
+                ? $this->cancelledMessage($order)
+                : 'Only pending orders can be accepted.',
         ], 422);
 
     }
@@ -166,11 +169,26 @@ public function accept(Request $request, $orderId)
 
     }
 
-    DB::transaction(function () use (
+    $deliveryOrder = null;
+
+    $accepted = DB::transaction(function () use (
         $order,
         $restaurantAddress,
-        $deliveryAddress
+        $deliveryAddress,
+        &$deliveryOrder
     ) {
+
+        /*
+         * Lock the order and re-check it, so a customer cancel that
+         * landed after the check above is not overwritten.
+         */
+        $currentStatus = RestaurantOrder::whereKey($order->id)
+            ->lockForUpdate()
+            ->value('order_status');
+
+        if ($currentStatus !== 'pending') {
+            return false;
+        }
 
         /*
          * Update restaurant order
@@ -231,6 +249,34 @@ public function accept(Request $request, $orderId)
     ]
 );
 
+OrderPayment::firstOrCreate(
+    [
+        'delivery_order_id' => $deliveryOrder->id,
+    ],
+    [
+        'payment_method' => $order->payment_method === 'cash'
+            ? 'COD'
+            : 'ONLINE',
+
+        'payment_status' => strtolower($order->payment_status) === 'paid'
+            ? 'PAID'
+            : 'PENDING',
+
+        'order_amount' => $order->subtotal,
+
+        'delivery_fee' => $order->delivery_charge ?? 0,
+
+        'cod_amount' => $order->payment_method === 'cash'
+            ? $order->total_amount
+            : 0,
+
+        'transaction_id' => null,
+
+        'payment_gateway' => null,
+
+        'paid_at' => null,
+    ]
+);
 /*
 |--------------------------------------------------------------------------
 | Copy restaurant order items to rider delivery order
@@ -247,7 +293,23 @@ foreach ($order->items as $item) {
         'special_instruction' => $item->special_instruction,
     ]);
 }
+
+        return true;
     });
+
+    if (!$accepted) {
+        $order->refresh();
+
+        return response()->json([
+            'success' => false,
+            'message' => $order->order_status === 'cancelled'
+                ? $this->cancelledMessage($order)
+                : 'Only pending orders can be accepted.',
+        ], 422);
+    }
+
+    // Notify customer that order was accepted & notify nearby riders
+    app(\App\Services\Notification\OrderNotificationService::class)->orderAccepted($order, $deliveryOrder);
 
     /*
      * Load the same relationships as before.
@@ -273,7 +335,7 @@ public function updateStatus(Request $request, $orderId)
 
     $restaurant = $request->user();
 
-    $order = RestaurantOrder::where('restaurant_id', $restaurant->id)
+    $order = RestaurantOrder::where('restaurant_id', $restaurant->id)->visibleToRestaurant()
         ->findOrFail($orderId);
 
     $allowedTransitions = [
@@ -343,68 +405,12 @@ DeliveryOrder::where('order_number', $order->order_number)
             |--------------------------------------------------------------------------
             | Restaurant Commission & Earning
             |--------------------------------------------------------------------------
+            |
+            | Calculated and saved now (earning_status stays pending).
+            | The wallet is credited when the order is delivered.
             */
 
-            $commissionPercentage = (float) config(
-                'restaurant.commission_percentage',
-                20.00
-            );
-
-            // Commission is calculated on restaurant food subtotal
-            $commissionAmount = round(
-                ($order->subtotal * $commissionPercentage) / 100,
-                2
-            );
-
-            // Restaurant receives remaining amount
-            $restaurantEarning = round(
-                $order->subtotal - $commissionAmount,
-                2
-            );
-
-            /*
-            |--------------------------------------------------------------------------
-            | Update Order Earning
-            |--------------------------------------------------------------------------
-            */
-
-            $updateData['commission_percentage'] = $commissionPercentage;
-            $updateData['commission_amount'] = $commissionAmount;
-            $updateData['restaurant_earning'] = $restaurantEarning;
-            $updateData['earning_status'] = 'credited';
-            $updateData['earning_credited_at'] = now();
-
-            /*
-            |--------------------------------------------------------------------------
-            | Add Earning To Restaurant Wallet
-            |--------------------------------------------------------------------------
-            */
-
-            $newBalance = round(
-                (float) $restaurant->wallet_balance + $restaurantEarning,
-                2
-            );
-
-            $restaurant->update([
-                'wallet_balance' => $newBalance,
-            ]);
-
-            /*
-            |--------------------------------------------------------------------------
-            | Wallet Transaction
-            |--------------------------------------------------------------------------
-            */
-
-            RestaurantWalletTransaction::create([
-                'restaurant_id' => $restaurant->id,
-                'type' => 'credit',
-                'amount' => $restaurantEarning,
-                'balance_after' => $newBalance,
-                'title' => 'Order Payment',
-                'description' => 'Restaurant earning credited for order ' . $order->order_number,
-                'reference_type' => 'restaurant_order',
-                'reference_id' => $order->id,
-            ]);
+            app(RestaurantEarningService::class)->calculate($order, $restaurant);
         }
 
         /*
@@ -439,6 +445,10 @@ DeliveryOrder::where('order_number', $order->order_number)
         'statusHistories',
     ]);
 
+    if ($request->status === 'ready_for_pickup') {
+        app(\App\Services\Notification\OrderNotificationService::class)->orderReadyForPickup($order);
+    }
+
     return response()->json([
         'success' => true,
         'message' => 'Order status updated successfully.',
@@ -454,34 +464,24 @@ public function reject(Request $request, $orderId)
 
     $restaurant = $request->user();
 
-    $order = RestaurantOrder::where('restaurant_id', $restaurant->id)
+    $order = RestaurantOrder::where('restaurant_id', $restaurant->id)->visibleToRestaurant()
         ->findOrFail($orderId);
 
-    // Reject only if order is still pending
-    if ($order->order_status !== 'pending') {
+    // Reject only if order is still pending (re-checked under a row lock)
+    $cancelled = app(OrderCancellationService::class)->cancel(
+        $order,
+        OrderCancellationService::BY_RESTAURANT,
+        (string) $request->reason
+    );
+
+    if (!$cancelled) {
         return response()->json([
             'success' => false,
             'message' => 'Only pending orders can be rejected.',
         ], 422);
     }
 
-    DB::transaction(function () use ($order, $request) {
-
-        $order->update([
-            'order_status'  => 'cancelled',
-            'cancel_reason' => $request->reason,
-            'cancelled_at'  => now(),
-        ]);
-
-        OrderStatusHistory::create([
-            'order_id'   => $order->id,
-            'status'     => 'cancelled',
-            'changed_by' => 'restaurant',
-            'remarks'    => $request->reason,
-        ]);
-    });
-
-    $order->refresh()->load([
+    $order->load([
         'items',
         'payment',
         'statusHistories',
@@ -492,6 +492,21 @@ public function reject(Request $request, $orderId)
         'message' => 'Order rejected successfully.',
         'data' => $order,
     ]);
+}
+
+/**
+ * Accept refused because the order is already cancelled.
+ */
+private function cancelledMessage(RestaurantOrder $order): string
+{
+    $cancelledBy = OrderStatusHistory::where('order_id', $order->id)
+        ->where('status', 'cancelled')
+        ->latest('id')
+        ->value('changed_by');
+
+    return $cancelledBy === 'customer'
+        ? 'This order has been cancelled by the customer.'
+        : 'This order has already been cancelled.';
 }
 
 }

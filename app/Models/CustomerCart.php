@@ -15,7 +15,12 @@ class CustomerCart extends Model
         'subtotal',
         'delivery_charge',
         'packing_charge',
+        'platform_fee',
+        'small_order_fee',
         'discount',
+        'coupon_code',
+        'discount_type',
+        'discount_value',
         'tax',
         'total_amount',
     ];
@@ -24,7 +29,10 @@ class CustomerCart extends Model
         'subtotal' => 'decimal:2',
         'delivery_charge' => 'decimal:2',
         'packing_charge' => 'decimal:2',
+        'platform_fee' => 'decimal:2',
+        'small_order_fee' => 'decimal:2',
         'discount' => 'decimal:2',
+        'discount_value' => 'decimal:2',
         'tax' => 'decimal:2',
         'total_amount' => 'decimal:2',
     ];
