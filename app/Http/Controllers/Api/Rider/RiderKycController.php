@@ -720,6 +720,8 @@ public function completeProfile(Request $request)
         'status' => 'pending',
     ]);
 
+    app(\App\Services\Notification\AdminNotificationService::class)->riderApplicationSubmitted($rider);
+
     return response()->json([
         'success' => true,
         'message' => 'Profile and KYC documents completed successfully',

@@ -257,6 +257,27 @@ class CustomerOrderController extends Controller
                 ]);
             }
 
+            // If a coupon was applied, mark redemption and increment used_count
+            if (!empty($cart->coupon_code)) {
+                $appliedCoupon = \App\Models\Coupon::where('code', strtoupper(trim($cart->coupon_code)))->first();
+                if ($appliedCoupon) {
+                    $appliedCoupon->increment('used_count');
+                    if ($appliedCoupon->is_single_use) {
+                        $appliedCoupon->update([
+                            'used_at'  => now(),
+                            'order_id' => $order->id,
+                        ]);
+                    }
+                    \App\Models\CouponRedemption::create([
+                        'coupon_id' => $appliedCoupon->id,
+                        'customer_id' => $customer->id,
+                        'order_id' => $order->id,
+                        'discount_amount' => (float) ($cart->discount ?? 0),
+                        'order_amount' => (float) ($cart->total_amount ?? 0),
+                    ]);
+                }
+            }
+
             /*
              * Remove cart after successful order creation.
              */
@@ -354,6 +375,7 @@ public function show(Request $request, $id)
             'items',
             'payment',
             'review.reply',
+            'latestRefund.coupon',
         ])
         ->first();
 
@@ -488,6 +510,25 @@ if (
                         'reply'      => $order->review->reply->reply,
                         'replied_at' => optional($order->review->reply->created_at)->diffForHumans(),
                     ] : null,
+                ] : null,
+
+                /*
+                 * Complaint & Refund details (20% on food subtotal only)
+                 */
+                'can_complain'             => $order->order_status === 'delivered' && $order->latestRefund === null,
+                'eligible_refund_preview'  => round(((float) $order->subtotal * 20) / 100, 2),
+                'complaint'                => $order->latestRefund ? [
+                    'id'                => $order->latestRefund->id,
+                    'refund_number'     => $order->latestRefund->refund_number,
+                    'scenario'          => $order->latestRefund->scenario,
+                    'status'            => $order->latestRefund->status,
+                    'reason'            => $order->latestRefund->reason,
+                    'customer_note'     => $order->latestRefund->customer_note,
+                    'proof_image_url'   => $order->latestRefund->proof_image_url,
+                    'refund_amount'     => (float) $order->latestRefund->amount,
+                    'coupon_code'       => $order->latestRefund->coupon?->code,
+                    'rejection_reason'  => $order->latestRefund->rejection_reason,
+                    'created_at'        => $order->latestRefund->created_at?->toIso8601String(),
                 ] : null,
             ],
         ],
@@ -958,7 +999,7 @@ public function reorder(Request $request, $id)
             }
         }
 
-        // 3. Check delivery distance (max 15 km) if coordinates are available
+        // 3. Check delivery distance against the platform max delivery radius if coordinates are available
         $restaurantAddress = $restaurant->address;
 
         if (
@@ -975,8 +1016,10 @@ public function reorder(Request $request, $id)
                 (float) $deliveryAddress->longitude
             );
 
-            if ($distance !== null && $distance > 15) {
-                return 'Delivery address is outside this restaurant\'s maximum delivery radius (15 km). Distance: ' . number_format($distance, 1) . ' km.';
+            $maxRadius = (float) \App\Models\PlatformSetting::getSettings()->max_delivery_radius;
+
+            if ($distance !== null && $maxRadius > 0 && $distance > $maxRadius) {
+                return 'Delivery address is outside this restaurant\'s maximum delivery radius (' . rtrim(rtrim(number_format($maxRadius, 1), '0'), '.') . ' km). Distance: ' . number_format($distance, 1) . ' km.';
             }
         }
 

@@ -153,7 +153,7 @@ class RestaurantSettlementController extends Controller
         }
 
         $orders = RestaurantOrder::whereIn('id', $orderIds)
-            ->get(['id', 'order_number', 'subtotal', 'commission_percentage', 'commission_amount', 'restaurant_earning', 'earning_status', 'delivered_at'])
+            ->get(['id', 'order_number', 'subtotal', 'packing_charge', 'commission_percentage', 'commission_amount', 'restaurant_earning', 'earning_status', 'delivered_at'])
             ->keyBy('id');
 
         return $transactions
@@ -166,6 +166,7 @@ class RestaurantSettlementController extends Controller
                     'order_number' => $order?->order_number,
                     'entry' => $entry->type === 'credit' ? 'credited' : 'reversed',
                     'subtotal' => (float) ($order->subtotal ?? 0),
+                    'packing_charge' => (float) ($order->packing_charge ?? 0),
                     'commission_rate' => (float) ($order->commission_percentage ?? 0),
                     'commission' => (float) ($order->commission_amount ?? 0),
                     'earning' => (float) ($order->restaurant_earning ?? 0),
@@ -192,6 +193,7 @@ class RestaurantSettlementController extends Controller
             'orders_count' => $settlement->orders_count,
             'gross_sales' => (float) $settlement->gross_sales,
             'commission' => (float) $settlement->commission,
+            'packing_charges' => (float) ($settlement->packing_charges ?? 0),
             'earnings' => (float) $settlement->total_amount,
             'opening_balance' => $settlement->opening_balance !== null ? (float) $settlement->opening_balance : null,
             'total_credit' => $settlement->total_credit !== null ? (float) $settlement->total_credit : null,
@@ -212,10 +214,10 @@ class RestaurantSettlementController extends Controller
         return [
             'commission_rate' => $rate,
             'steps' => [
-                'Each order earns: food subtotal − ' . rtrim(rtrim(number_format($rate, 2), '0'), '.') . '% VegGo commission.',
+                'Each order earns: food subtotal − ' . rtrim(rtrim(number_format($rate, 2), '0'), '.') . '% VegGo commission + packing charge.',
                 'The earning is credited to your wallet when the order is delivered.',
                 'If a delivered order is cancelled, its earning is debited back.',
-                'Week runs Monday 00:00 to next Monday 00:00. Your wallet balance at the cut-off is paid out on Tuesday at '
+                'Week runs Monday 00:00 to Sunday 23:59. Your wallet balance at the cut-off is paid out on Monday at '
                     . date('h:i A', strtotime(config('settlement.payout_time', '09:00'))) . ' to your UPI ID.',
                 'If no UPI ID is added in documents the payout is skipped and carried to the next week.',
             ],

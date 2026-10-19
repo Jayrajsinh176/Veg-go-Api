@@ -48,6 +48,16 @@ return [
         'result_url' => env('PAYU_RESULT_URL'),
     ],
 
+    'google_maps' => [
+        // Server-side key (Routes / Geocoding). Never ship this key in the mobile apps.
+        'api_key' => env('GOOGLE_MAPS_API_KEY'),
+        // When false, distance/ETA falls back to straight-line (haversine) calculation.
+        'enabled' => (bool) env('GOOGLE_MAPS_ENABLED', false),
+        'timeout' => (int) env('GOOGLE_MAPS_TIMEOUT', 5),
+        // Route results are cached (seconds) so the same trip is not billed twice.
+        'cache_ttl' => (int) env('GOOGLE_MAPS_CACHE_TTL', 21600),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

@@ -9,6 +9,7 @@ use App\Models\RestaurantAdPackage;
 use App\Models\RestaurantAdPackageDuration;
 use App\Models\RestaurantAdPayment;
 use App\Models\RestaurantAdvertisement;
+use App\Models\RestaurantAdvertisementEvent;
 use App\Models\RestaurantAdvertisementHistory;
 use App\Models\RestaurantMenuItem;
 use App\Models\RestaurantNotification;
@@ -31,6 +32,12 @@ use Illuminate\Validation\Rule;
  */
 class RestaurantAdvertisementService
 {
+    // Same customer + ad + event inside this window counts once
+    private const EVENT_DEDUPE_SECONDS = [
+        RestaurantAdvertisementEvent::EVENT_IMPRESSION => 1800,
+        RestaurantAdvertisementEvent::EVENT_CLICK => 5,
+    ];
+
     public function __construct(private PaymentGateway $gateway)
     {
     }
@@ -1617,6 +1624,101 @@ class RestaurantAdvertisementService
                 ->where('is_active', true)
                 ->where('is_available', true)
                 ->whereHas('category', fn ($c) => $c->where('is_active', true)));
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Impression / click tracking
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Records impressions and clicks reported by the customer app. Events
+     * for ads that are not live are ignored, and repeats from the same
+     * customer inside EVENT_DEDUPE_SECONDS are dropped so re-rendering the
+     * home screen does not inflate the numbers. Returns how many were saved.
+     *
+     * @param  array<int, array{advertisement_id: int, event: string}>  $events
+     */
+    public function recordEvents(?int $customerId, array $events): int
+    {
+        $events = collect($events)
+            ->map(fn ($row) => ['advertisement_id' => (int) $row['advertisement_id'], 'event' => (string) $row['event']])
+            ->filter(fn ($row) => in_array($row['event'], RestaurantAdvertisementEvent::events(), true))
+            ->unique(fn ($row) => $row['advertisement_id'] . '|' . $row['event'])
+            ->values();
+
+        if ($events->isEmpty()) {
+            return 0;
+        }
+
+        $liveIds = RestaurantAdvertisement::query()
+            ->live()
+            ->whereIn('id', $events->pluck('advertisement_id')->unique())
+            ->pluck('id')
+            ->flip();
+
+        $now = now();
+        $saved = 0;
+
+        foreach ($events as $row) {
+            if (!$liveIds->has($row['advertisement_id'])) {
+                continue;
+            }
+
+            if ($customerId) {
+                $repeat = RestaurantAdvertisementEvent::query()
+                    ->where('customer_id', $customerId)
+                    ->where('advertisement_id', $row['advertisement_id'])
+                    ->where('event', $row['event'])
+                    ->where('created_at', '>', $now->copy()->subSeconds(self::EVENT_DEDUPE_SECONDS[$row['event']]))
+                    ->exists();
+
+                if ($repeat) {
+                    continue;
+                }
+            }
+
+            RestaurantAdvertisementEvent::query()->create([
+                'advertisement_id' => $row['advertisement_id'],
+                'customer_id' => $customerId,
+                'event' => $row['event'],
+                'created_at' => $now,
+            ]);
+
+            $saved++;
+        }
+
+        return $saved;
+    }
+
+    /**
+     * Lifetime impressions, clicks and CTR per ad, keyed by ad id.
+     */
+    public function eventStats(Collection $advertisementIds): Collection
+    {
+        if ($advertisementIds->isEmpty()) {
+            return collect();
+        }
+
+        $counts = RestaurantAdvertisementEvent::query()
+            ->whereIn('advertisement_id', $advertisementIds->unique()->values())
+            ->selectRaw('advertisement_id, event, COUNT(*) as total')
+            ->groupBy('advertisement_id', 'event')
+            ->get()
+            ->groupBy('advertisement_id');
+
+        return $advertisementIds->unique()->mapWithKeys(function ($id) use ($counts) {
+            $rows = $counts->get($id, collect())->pluck('total', 'event');
+            $impressions = (int) ($rows[RestaurantAdvertisementEvent::EVENT_IMPRESSION] ?? 0);
+            $clicks = (int) ($rows[RestaurantAdvertisementEvent::EVENT_CLICK] ?? 0);
+
+            return [$id => [
+                'impressions' => $impressions,
+                'clicks' => $clicks,
+                'ctr' => $impressions > 0 ? round($clicks / $impressions * 100, 2) : null,
+            ]];
+        });
     }
 
     /*

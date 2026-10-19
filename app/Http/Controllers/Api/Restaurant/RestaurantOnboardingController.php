@@ -105,6 +105,13 @@ public function saveAddress(Request $request)
         ]
     );
 
+    // Address is step 3; editing it later must not move a restaurant back
+    if ((int) $restaurant->onboarding_step < 3) {
+        $restaurant->update([
+            'onboarding_step' => 3,
+        ]);
+    }
+
     return response()->json([
         'success' => true,
         'message' => 'Restaurant address saved successfully.',
@@ -539,6 +546,8 @@ public function submitOnboarding(Request $request)
 ]);
 
 DB::commit();
+
+app(\App\Services\Notification\AdminNotificationService::class)->restaurantApplicationSubmitted($restaurant->fresh());
 
 return response()->json([
     'success' => true,

@@ -89,6 +89,49 @@ class SuperAdminAuthController extends Controller
     }
 
     /**
+     * Update authenticated super admin profile & password
+     */
+    public function updateProfile(Request $request)
+    {
+        $admin = $request->user();
+
+        if (!$admin) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $validated = $request->validate([
+            'email' => ['required', 'email', 'max:255', 'unique:admins,email,' . $admin->id],
+            'password' => ['nullable', 'string', 'min:6'],
+        ]);
+
+        $admin->email = strtolower(trim($validated['email']));
+
+        $changedPassword = false;
+        if (!empty($validated['password'])) {
+            $admin->password = Hash::make($validated['password']);
+            $changedPassword = true;
+        }
+
+        $admin->save();
+
+        AdminActivityLog::record($admin, $request, [
+            'action' => 'Update Profile',
+            'module' => 'Security',
+            'source' => 'Super Admin Profile',
+            'change_summary' => $changedPassword ? 'Updated profile email and password' : 'Updated profile email',
+            'details' => "Admin {$admin->name} ({$admin->email}) updated profile details.",
+            'review_status' => 'Reviewed',
+        ]);
+
+        return response()->json([
+            'message' => $changedPassword
+                ? 'Profile and password updated successfully.'
+                : 'Profile updated successfully.',
+            'admin' => $this->formatAdmin($admin),
+        ]);
+    }
+
+    /**
      * Super Admin Logout
      */
     public function logout(Request $request)

@@ -15,8 +15,8 @@ class RestaurantAutoPayoutService
     }
 
     /**
-     * Pays out every Monday-to-Monday cycle that has closed, from the
-     * Tuesday-morning payout time onwards
+     * Pays out every Monday-to-Sunday cycle that has closed, from the
+     * Monday-morning payout time (09:00 AM) onwards
      */
     public function processDueSettlements(): int
     {
@@ -65,7 +65,7 @@ class RestaurantAutoPayoutService
     /**
      * Restaurants whose earlier payout failed (e.g. no UPI ID) but who had
      * no activity in the cycle that just closed still get a row for it, so
-     * the carried balance is retried this Tuesday.
+     * the carried balance is retried this Monday.
      */
     private function openClosedCycle(): void
     {

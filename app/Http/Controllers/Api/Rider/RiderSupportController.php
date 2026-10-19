@@ -51,6 +51,9 @@ class RiderSupportController extends Controller
             'image_path' => $imagePath,
         ]);
 
+        app(\App\Services\Notification\AdminNotificationService::class)
+            ->supportTicketCreated($ticket, 'rider', $rider->name);
+
         return response()->json([
             'success' => true,
             'message' => 'Support ticket created successfully.',

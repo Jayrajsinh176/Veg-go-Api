@@ -85,7 +85,7 @@ class PlatformSetting extends Model
                     'base_delivery_fee' => 25.00,
                     'per_km_fee' => 7.00,
                     'free_delivery_above' => 499.00,
-                    'max_delivery_radius' => 12.00,
+                    'max_delivery_radius' => 15.00,
                     'platform_fee' => 5.00,
                     'small_order_threshold' => 250.00,
                     'small_order_fee' => 10.00,

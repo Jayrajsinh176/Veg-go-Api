@@ -20,7 +20,6 @@ return Application::configure(basePath: dirname(__DIR__))
             'super_admin.auth' => \App\Http\Middleware\AuthenticateSuperAdmin::class,
             'super_admin.can' => \App\Http\Middleware\EnsureSuperAdminPermission::class,
             'admin.activity' => \App\Http\Middleware\LogAdminActivity::class,
-            'change.activity' => \App\Http\Middleware\RecordChangeActivity::class,
             'restaurant.not_suspended' => \App\Http\Middleware\EnsureRestaurantNotSuspended::class,
             'restaurant.approved' => \App\Http\Middleware\EnsureRestaurantApproved::class,
             'customer.not_blocked' => \App\Http\Middleware\EnsureCustomerNotBlocked::class,

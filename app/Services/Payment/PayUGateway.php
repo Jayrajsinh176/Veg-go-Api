@@ -9,11 +9,15 @@ use Illuminate\Support\Str;
 class PayUGateway implements PaymentGateway
 {
     public function __construct(
-        private ?string $key,
-        private ?string $salt,
-        private string $baseUrl = 'https://test.payu.in/_payment',
-        private string $verifyUrl = 'https://test.payu.in/merchant/postservice?form=2',
+        private ?string $key = null,
+        private ?string $salt = null,
+        private ?string $baseUrl = null,
+        private ?string $verifyUrl = null,
     ) {
+        $this->key = $this->key ?: (string) config('services.payu.key');
+        $this->salt = $this->salt ?: (string) config('services.payu.salt');
+        $this->baseUrl = $this->baseUrl ?: (string) config('services.payu.base_url', 'https://test.payu.in/_payment');
+        $this->verifyUrl = $this->verifyUrl ?: (string) config('services.payu.verify_url', 'https://test.payu.in/merchant/postservice?form=2');
     }
 
     public function name(): string
@@ -148,6 +152,55 @@ class PayUGateway implements PaymentGateway
         $this->ensureConfigured();
 
         return true;
+    }
+
+    public function refund(string $paymentId, float $amount, string $refundId): array
+    {
+        $this->ensureConfigured();
+
+        $command = 'cancel_refund_transaction';
+        $amountStr = number_format($amount, 2, '.', '');
+
+        $hash = hash(
+            'sha512',
+            $this->key . '|' . $command . '|' . $paymentId . '|' . $this->salt
+        );
+
+        $response = Http::asForm()
+            ->acceptJson()
+            ->timeout(20)
+            ->post($this->verifyUrl, [
+                'key' => $this->key,
+                'command' => $command,
+                'var1' => $paymentId,
+                'var2' => $refundId,
+                'var3' => $amountStr,
+                'hash' => $hash,
+            ]);
+
+        if (!$response->successful()) {
+            throw new PaymentGatewayException('PayU refund request returned HTTP ' . $response->status());
+        }
+
+        $body = $response->json();
+        $status = (int) ($body['status'] ?? 0);
+        $msg = $body['msg'] ?? $body['message'] ?? 'Refund processed';
+
+        if ($status !== 1 && !str_contains(strtolower((string) $msg), 'success')) {
+            Log::warning('PayU refund non-success response', [
+                'txnid' => $paymentId,
+                'refund_id' => $refundId,
+                'response' => $body,
+            ]);
+        }
+
+        return [
+            'success' => $status === 1 || str_contains(strtolower((string) $msg), 'success'),
+            'refund_id' => (string) ($body['request_id'] ?? $refundId),
+            'status' => $status === 1 ? 'completed' : 'processing',
+            'message' => (string) $msg,
+            'raw' => is_array($body) ? $body : [],
+        ];
     }
 
     public function checkoutConfig(): array

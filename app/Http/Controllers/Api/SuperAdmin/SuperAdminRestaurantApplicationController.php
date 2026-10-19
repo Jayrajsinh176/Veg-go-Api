@@ -96,12 +96,25 @@ class SuperAdminRestaurantApplicationController extends Controller
         $validated = $request->validate(self::FILTER_RULES);
 
         $lookups = $this->locationLookups();
+        $defaultCommission = (float) (PlatformSetting::getSettings()->restaurant_commission ?? config('restaurant.commission_percentage', 30.00));
 
+        // List row plus the details the PDF report shows
         $applications = $this->filteredQuery($validated)
             ->orderByRaw('submitted_at DESC')
             ->limit(self::EXPORT_LIMIT)
             ->get()
-            ->map(fn ($restaurant) => $this->listRow($restaurant, $lookups));
+            ->map(fn ($restaurant) => [
+                ...$this->listRow($restaurant, $lookups),
+                'full_address' => $this->fullAddress($restaurant),
+                'outlet_type' => $restaurant->document?->outletType?->name,
+                'commission' => [
+                    'rate' => $restaurant->commission_percentage !== null
+                        ? (float) $restaurant->commission_percentage
+                        : $defaultCommission,
+                    'is_set' => $restaurant->commission_percentage !== null,
+                    'default' => $defaultCommission,
+                ],
+            ]);
 
         return response()->json([
             'message' => 'Restaurant applications exported successfully.',
@@ -124,27 +137,6 @@ class SuperAdminRestaurantApplicationController extends Controller
             'message' => 'Restaurant application fetched successfully.',
             'data' => $this->detailRow($restaurant),
         ]);
-    }
-
-    /**
-     * Assign the application to the signed in super admin
-     */
-    public function assign(Request $request, $id)
-    {
-        $restaurant = $this->findApplication($id);
-
-        if (!$restaurant) {
-            return $this->notFound();
-        }
-
-        $admin = $request->user();
-
-        $this->review($restaurant)->update(['assigned_admin_id' => $admin->id]);
-        $this->startReview($restaurant);
-
-        $this->log($request, $restaurant, 'Application Assigned', 'Assigned to ' . $admin->name);
-
-        return $this->detailResponse($restaurant->id, 'Application assigned successfully.');
     }
 
     /**
@@ -445,7 +437,7 @@ class SuperAdminRestaurantApplicationController extends Controller
             ->selectRaw("{$citySql} as city_id")
             ->with([
                 'document.outletType:id,name',
-                'applicationReview.assignedAdmin:id,name',
+                'applicationReview',
             ])
             ->when($search !== '', function ($query) use ($search) {
                 $query->where(function ($query) use ($search) {
@@ -585,7 +577,6 @@ class SuperAdminRestaurantApplicationController extends Controller
         $city = $restaurant->city_id ? $lookups['cities']->firstWhere('id', (int) $restaurant->city_id) : null;
         $area = $this->area($restaurant, $city?->id, $lookups['areas']);
         $documents = $this->documents($restaurant);
-        $assigned = $restaurant->applicationReview?->assignedAdmin;
 
         return [
             'id' => $restaurant->id,
@@ -602,10 +593,6 @@ class SuperAdminRestaurantApplicationController extends Controller
             'documents' => $documents,
             'documents_verified' => collect($documents)->where('verified', true)->count(),
             'documents_total' => count($documents),
-            'assigned_to' => $assigned ? [
-                'id' => $assigned->id,
-                'name' => $assigned->name,
-            ] : null,
         ];
     }
 

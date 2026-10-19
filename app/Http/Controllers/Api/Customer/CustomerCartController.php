@@ -583,6 +583,22 @@ public function applyCoupon(Request $request)
         ], 422);
     }
 
+    // Customer-locked coupon check (e.g. compensation coupon)
+    if ($coupon->customer_id !== null && (int) $coupon->customer_id !== (int) $customer->id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'This coupon is not valid for your account.',
+        ], 422);
+    }
+
+    // Single-use coupon check
+    if ($coupon->is_single_use && $coupon->used_at !== null) {
+        return response()->json([
+            'success' => false,
+            'message' => 'This coupon has already been used.',
+        ], 422);
+    }
+
     // Check coupon start date
     if ($coupon->starts_at && now()->lt($coupon->starts_at)) {
         return response()->json([
@@ -597,6 +613,42 @@ public function applyCoupon(Request $request)
             'success' => false,
             'message' => 'This coupon has expired.',
         ], 422);
+    }
+
+    // Check total campaign usage limit
+    if ($coupon->total_limit > 0 && $coupon->used_count >= $coupon->total_limit) {
+        return response()->json([
+            'success' => false,
+            'message' => 'This coupon maximum redemption limit has been reached.',
+        ], 422);
+    }
+
+    // Check per-customer usage limit
+    if ($coupon->customer_limit > 0) {
+        $customerUsageCount = \App\Models\CouponRedemption::where('coupon_id', $coupon->id)
+            ->where('customer_id', $customer->id)
+            ->count();
+        if ($customerUsageCount >= $coupon->customer_limit) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You have already reached the redemption limit for this coupon.',
+            ], 422);
+        }
+    }
+
+    // Check restaurant applicability
+    if ($coupon->applicable_type === 'selected' && !empty($coupon->applicable_restaurants)) {
+        $allowed = (array) $coupon->applicable_restaurants;
+        $restaurantName = $cart->restaurant?->restaurant_name ?? '';
+        $isAllowed = in_array((string)$cart->restaurant_id, $allowed, true) ||
+                     in_array($cart->restaurant_id, $allowed, true) ||
+                     in_array($restaurantName, $allowed, true);
+        if (!$isAllowed) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This coupon is not valid for the selected restaurant.',
+            ], 422);
+        }
     }
 
     // Coupon minimum order amount is checked against FOOD SUBTOTAL only
@@ -736,6 +788,134 @@ return response()->json([
         'cart' => null,
     ],
 ], 200);
+}
+
+public function removeCoupon(Request $request)
+{
+    $customer = $request->user();
+
+    $cart = \App\Models\CustomerCart::query()
+        ->where('customer_id', $customer->id)
+        ->first();
+
+    if (!$cart) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Cart is empty.',
+        ], 400);
+    }
+
+    $cart->coupon_code = null;
+    $cart->discount_type = null;
+    $cart->discount_value = 0;
+    $cart->discount = 0;
+
+    $this->recalculateCartTotals($cart);
+    $cart->save();
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Coupon removed successfully.',
+        'data' => [
+            'cart' => [
+                'id' => $cart->id,
+                'subtotal' => $cart->subtotal,
+                'delivery_charge' => $cart->delivery_charge,
+                'packing_charge' => $cart->packing_charge,
+                'platform_fee' => $cart->platform_fee,
+                'coupon_code' => null,
+                'discount_type' => null,
+                'discount_value' => 0,
+                'discount' => 0,
+                'tax' => $cart->tax,
+                'total_amount' => $cart->total_amount,
+            ],
+        ],
+    ], 200);
+}
+
+public function availableCoupons(Request $request)
+{
+    $customer = $request->user();
+
+    $coupons = \App\Models\Coupon::query()
+        ->where('is_active', true)
+        ->where(function ($query) use ($customer) {
+            $query->whereNull('customer_id')
+                ->orWhere('customer_id', $customer->id);
+        })
+        ->where(function ($query) {
+            $query->whereNull('starts_at')
+                ->orWhere('starts_at', '<=', now());
+        })
+        ->where(function ($query) {
+            $query->whereNull('expires_at')
+                ->orWhere('expires_at', '>=', now());
+        })
+        ->where(function ($query) {
+            $query->where('is_single_use', false)
+                ->orWhereNull('used_at');
+        })
+        ->where(function ($query) {
+            $query->where('total_limit', 0)
+                ->orWhereRaw('used_count < total_limit');
+        })
+        ->orderByDesc('is_compensation')
+        ->orderByDesc('id')
+        ->get();
+
+    $cart = \App\Models\CustomerCart::where('customer_id', $customer->id)->first();
+    $subtotal = (float) ($cart?->subtotal ?? 0);
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Available coupons retrieved successfully.',
+        'data' => [
+            'applied_coupon' => $cart?->coupon_code,
+            'coupons' => $coupons->map(function ($coupon) use ($subtotal) {
+                $isApplicable = $subtotal >= (float) $coupon->min_order_amount;
+
+                $estimatedDiscount = 0;
+                if ($coupon->discount_type === 'percentage') {
+                    $estimatedDiscount = round(($subtotal * (float) $coupon->discount_value) / 100, 2);
+                    if ($coupon->max_discount_amount !== null) {
+                        $estimatedDiscount = min($estimatedDiscount, (float) $coupon->max_discount_amount);
+                    }
+                } else {
+                    $estimatedDiscount = min((float) $coupon->discount_value, $subtotal);
+                }
+
+                $title = $coupon->is_compensation
+                    ? 'Compensation Refund Coupon (20%)'
+                    : ($coupon->name ?: ($coupon->discount_type === 'percentage'
+                        ? "{$coupon->discount_value}% OFF"
+                        : '₹' . number_format($coupon->discount_value, 0) . ' OFF'));
+
+                $desc = $coupon->is_compensation
+                    ? 'Exclusive single-use compensation coupon of ₹' . number_format($coupon->discount_value, 2) . ' for your previous complaint.'
+                    : ($coupon->description ?: ($coupon->min_order_amount > 0
+                        ? 'Valid on orders above ₹' . number_format($coupon->min_order_amount, 0)
+                        : 'Valid on all orders'));
+
+                return [
+                    'id' => $coupon->id,
+                    'code' => $coupon->code,
+                    'name' => $coupon->name,
+                    'title' => $title,
+                    'description' => $desc,
+                    'discount_type' => $coupon->discount_type,
+                    'discount_value' => (float) $coupon->discount_value,
+                    'min_order_amount' => (float) $coupon->min_order_amount,
+                    'max_discount_amount' => $coupon->max_discount_amount ? (float) $coupon->max_discount_amount : null,
+                    'is_compensation' => (bool) $coupon->is_compensation,
+                    'is_single_use' => (bool) $coupon->is_single_use,
+                    'expires_at' => $coupon->expires_at?->format('d M Y, h:i A'),
+                    'is_applicable' => $isApplicable,
+                    'estimated_savings' => $estimatedDiscount,
+                ];
+            })->values(),
+        ],
+    ], 200);
 }
 
 }

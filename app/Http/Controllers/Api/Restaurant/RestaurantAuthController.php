@@ -99,7 +99,7 @@ if ($restaurant && $restaurant->status === 'suspended') {
 
     } else {
 
-        $isNewRestaurant = false;
+        $isNewRestaurant = $this->notStartedOnboarding($restaurant);
 
     }
 
@@ -116,9 +116,8 @@ $token = $restaurant->createToken('restaurant-token')->plainTextToken;
         'token' => $token,
         'is_new_restaurant' => $isNewRestaurant,
         'restaurant' => $restaurant,
-        'next_screen' => $isNewRestaurant
-            ? 'restaurant_information'
-            : 'dashboard',
+        'onboarding_step' => (int) $restaurant->onboarding_step,
+        'next_screen' => $this->nextScreen($restaurant, $isNewRestaurant),
     ], 200);
 }
 
@@ -179,7 +178,7 @@ public function msg91Login(Request $request, Msg91OtpService $msg91)
 
         $isNewRestaurant = true;
     } else {
-        $isNewRestaurant = false;
+        $isNewRestaurant = $this->notStartedOnboarding($restaurant);
     }
 
     // Delete Old Tokens
@@ -194,9 +193,8 @@ public function msg91Login(Request $request, Msg91OtpService $msg91)
         'token' => $token,
         'is_new_restaurant' => $isNewRestaurant,
         'restaurant' => $restaurant,
-        'next_screen' => $isNewRestaurant
-            ? 'restaurant_information'
-            : 'dashboard',
+        'onboarding_step' => (int) $restaurant->onboarding_step,
+        'next_screen' => $this->nextScreen($restaurant, $isNewRestaurant),
     ], 200);
 }
 
@@ -217,6 +215,33 @@ $otp = $this->generateAndSaveOtp($request->mobile);
         'message' => 'OTP resent successfully.',
         'otp' => $otp, // Remove in Production
     ], 200);
+}
+
+/**
+ * An existing account counts as new until its owner saves the first
+ * onboarding step (e.g. created by the super admin via Manual Entry)
+ */
+private function notStartedOnboarding(Restaurant $restaurant): bool
+{
+    return $restaurant->status === 'draft' && (int) $restaurant->onboarding_step <= 1;
+}
+
+/**
+ * Where the app goes after login. A draft account (unfinished onboarding,
+ * or created by the super admin) must resume onboarding: the dashboard
+ * is closed until the restaurant is approved.
+ */
+private function nextScreen(Restaurant $restaurant, bool $isNewRestaurant): string
+{
+    if ($isNewRestaurant) {
+        return 'restaurant_information';
+    }
+
+    if ($restaurant->status === 'draft') {
+        return 'onboarding';
+    }
+
+    return 'dashboard';
 }
 
 private function generateAndSaveOtp($mobile)

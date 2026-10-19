@@ -2,10 +2,13 @@
 
 namespace App\Services\Order;
 
+use App\Models\Coupon;
+use App\Models\CustomerNotification;
 use App\Models\DeliveryOrder;
 use App\Models\OrderStatusHistory;
 use App\Models\RestaurantOrder;
 use App\Models\RestaurantOrderPayment;
+use App\Services\Notification\AdminNotificationService;
 use App\Services\Notification\OrderNotificationService;
 use App\Services\Restaurant\RestaurantEarningService;
 use Illuminate\Support\Facades\DB;
@@ -96,12 +99,14 @@ class OrderCancellationService
             ]);
 
             if ($isPaid) {
-                // Refunds are not automated yet
-                Log::warning('Paid order cancelled, manual refund needed', [
-                    'order_id'     => $locked->id,
-                    'order_number' => $locked->order_number,
-                    'cancelled_by' => $by,
-                ]);
+                try {
+                    app(\App\Services\Refund\RefundService::class)->createPreDeliveryRefund($locked, $reason);
+                } catch (\Throwable $e) {
+                    Log::error('Error triggering auto refund on order cancellation', [
+                        'order_id' => $locked->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
             } else {
                 $locked->update(['payment_status' => 'failed']);
 
@@ -133,6 +138,27 @@ class OrderCancellationService
 
             // Drop the pending earning (or take back a credited one)
             $this->earnings->reverse($locked, $reason);
+
+            // Restore any single-use coupon that was redeemed on this cancelled order
+            $usedCoupon = Coupon::where('order_id', $locked->id)
+                ->where('is_single_use', true)
+                ->first();
+
+            if ($usedCoupon) {
+                $usedCoupon->update([
+                    'used_at'  => null,
+                    'order_id' => null,
+                    'is_active' => true,
+                ]);
+
+                CustomerNotification::create([
+                    'customer_id' => $locked->customer_id,
+                    'title'       => 'Coupon Restored',
+                    'message'     => "Order #{$locked->order_number} was cancelled. Your compensation coupon {$usedCoupon->code} has been restored to your account.",
+                    'type'        => 'coupon_restored',
+                    'order_id'    => $locked->id,
+                ]);
+            }
 
             return true;
         });
@@ -167,6 +193,11 @@ class OrderCancellationService
 
         if ($riderId) {
             $this->notifications->orderCancelledForRider($order, $riderId, $reason);
+        }
+
+        // Admins only need to hear about cancels they did not make themselves
+        if (in_array($by, [self::BY_CUSTOMER, self::BY_RESTAURANT], true)) {
+            app(AdminNotificationService::class)->orderCancelled($order, $by, $reason);
         }
     }
 }

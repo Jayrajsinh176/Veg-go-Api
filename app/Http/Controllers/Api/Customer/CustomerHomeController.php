@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Models\Restaurant;
+use App\Models\RestaurantAdvertisementEvent;
 use App\Models\RestaurantCategory;
 use App\Services\Restaurant\RestaurantAdvertisementService;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class CustomerHomeController extends Controller
 {
@@ -139,5 +141,26 @@ class CustomerHomeController extends Controller
             ],
 
         ], 200);
+    }
+
+    /**
+     * The app reports ads it showed (impression) or the customer tapped
+     * (click). Body: { "events": [ { "advertisement_id": 12, "event": "impression" } ] }
+     */
+    public function trackAdvertisements(Request $request, RestaurantAdvertisementService $advertisements)
+    {
+        $validated = $request->validate([
+            'events' => ['required', 'array', 'min:1', 'max:50'],
+            'events.*.advertisement_id' => ['required', 'integer', 'min:1'],
+            'events.*.event' => ['required', Rule::in(RestaurantAdvertisementEvent::events())],
+        ]);
+
+        $recorded = $advertisements->recordEvents($request->user()->id, $validated['events']);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Advertisement events recorded.',
+            'data' => ['recorded' => $recorded],
+        ]);
     }
 }

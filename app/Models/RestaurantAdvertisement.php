@@ -113,6 +113,11 @@ class RestaurantAdvertisement extends Model
         return $this->hasMany(RestaurantAdvertisementHistory::class, 'advertisement_id');
     }
 
+    public function events()
+    {
+        return $this->hasMany(RestaurantAdvertisementEvent::class, 'advertisement_id');
+    }
+
     /**
      * Payment states an active ad may be shown with. While online payment
      * is switched off (config advertisement.payment_enabled), unpaid

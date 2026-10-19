@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\SuperAdmin;
 
 use App\Http\Controllers\Controller;
+use App\Models\AdminActivityLog;
 use App\Models\ChangeActivityEvent;
 use App\Models\RestaurantNotification;
 use App\Models\RestaurantOrder;
@@ -15,8 +16,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 /**
- * Settlements page, Restaurants type: weekly (Monday to Monday) restaurant
- * settlements, paid Tuesday morning.
+ * Settlements page, Restaurants type: weekly (Monday to Sunday) restaurant
+ * settlements, paid Monday morning 09:00 AM.
  *
  * Tabs map to RestaurantWeeklySettlement.status:
  *   pending -> Pending | processing -> On Hold | successful -> Completed | failed -> Failed
@@ -141,7 +142,7 @@ class SuperAdminRestaurantSettlementController extends Controller
             ->unique();
 
         $orders = $orderIds->isEmpty() ? collect() : RestaurantOrder::whereIn('id', $orderIds)
-            ->get(['id', 'order_number', 'subtotal', 'commission_percentage', 'commission_amount', 'restaurant_earning', 'earning_status', 'delivered_at']);
+            ->get(['id', 'order_number', 'subtotal', 'packing_charge', 'commission_percentage', 'commission_amount', 'restaurant_earning', 'earning_status', 'delivered_at']);
 
         return response()->json([
             'message' => 'Settlement fetched successfully.',
@@ -320,6 +321,7 @@ class SuperAdminRestaurantSettlementController extends Controller
             'orders_count' => $settlement->orders_count,
             'gross_sales' => (float) $settlement->gross_sales,
             'commission' => (float) $settlement->commission,
+            'packing_charges' => (float) ($settlement->packing_charges ?? 0),
             'earnings' => (float) $settlement->total_amount,
             'opening_balance' => $settlement->opening_balance !== null ? (float) $settlement->opening_balance : null,
             'total_credit' => $settlement->total_credit !== null ? (float) $settlement->total_credit : null,
@@ -356,20 +358,22 @@ class SuperAdminRestaurantSettlementController extends Controller
                 'status' => $row->status,
             ]);
 
-        $admin = ChangeActivityEvent::query()
-            ->where('module', 'Settlements')
-            ->where('path', 'like', '%/settlements/restaurants%')
-            ->latest()
-            ->limit(15)
-            ->get()
+        // admin_activity_logs from now on; change_activity_events holds older actions
+        $admin = collect([AdminActivityLog::query(), ChangeActivityEvent::query()])
+            ->flatMap(fn ($query) => $query
+                ->where('module', 'Settlements')
+                ->where('path', 'like', '%/settlements/restaurants%')
+                ->latest('id')
+                ->limit(15)
+                ->get())
             ->map(fn ($row) => [
                 'at' => $row->created_at,
                 'title' => match ($row->action) {
-                    'Run Batch' => 'Restaurant settlement batch run manually.',
-                    'Mark Paid' => 'Settlement marked as paid.',
-                    'Retry' => 'Failed payout retried.',
-                    'Update Hold' => 'Settlement hold status changed.',
-                    'Contact' => 'Restaurant contacted about settlement.',
+                    'Settlement Batch Run', 'Run Batch' => 'Restaurant settlement batch run manually.',
+                    'Settlement Marked Paid', 'Mark Paid' => 'Settlement marked as paid.',
+                    'Settlement Retry', 'Retry' => 'Failed payout retried.',
+                    'Settlement Hold', 'Update Hold' => 'Settlement hold status changed.',
+                    'Restaurant Contacted', 'Contact' => 'Restaurant contacted about settlement.',
                     default => $row->action . '.',
                 },
                 'actor' => $row->admin_name,

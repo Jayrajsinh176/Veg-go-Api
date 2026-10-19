@@ -56,6 +56,7 @@ use App\Http\Controllers\Api\Customer\CustomerSettingsController;
 use App\Http\Controllers\Api\Customer\CustomerSupportController;
 use App\Http\Controllers\Api\Customer\CustomerPayUController;
 use App\Http\Controllers\Api\Customer\CustomerReviewController;
+use App\Http\Controllers\Api\Customer\CustomerRefundController;
 
 
 // Admin Side controller
@@ -76,6 +77,7 @@ use App\Http\Controllers\Api\Admin\AdminReportController;
 use App\Http\Controllers\Api\Admin\AdminPaymentController;
 use App\Http\Controllers\Api\Admin\AdminActivityLogController;
 use App\Http\Controllers\Api\Admin\AdminAdvertisementController;
+use App\Http\Controllers\Api\Admin\AdminNotificationController;
 use App\Http\Controllers\Api\Admin\AdminSupportController;
 
 
@@ -190,11 +192,24 @@ Route::prefix('admin')->group(function () {
 
     Route::post('/login', [AdminAuthController::class, 'login']);
 
-    Route::middleware(['admin.auth', 'admin.activity', 'change.activity'])->group(function () {
+    Route::middleware(['admin.auth', 'admin.activity'])->group(function () {
 
         Route::get('/me', [AdminAuthController::class, 'me']);
 
+        Route::put('/profile', [AdminAuthController::class, 'updateProfile']);
+
         Route::post('/logout', [AdminAuthController::class, 'logout']);
+
+        // Notifications page + header bell
+        Route::prefix('notifications')->controller(AdminNotificationController::class)->group(function () {
+            Route::get('/', 'index');
+            Route::get('/unread-count', 'unreadCount');
+            Route::post('/read-all', 'markAllRead');
+            Route::get('/settings', 'settings');
+            Route::put('/settings', 'updateSettings');
+            Route::post('/{id}/read', 'markRead')->whereNumber('id');
+            Route::post('/{id}/unread', 'markUnread')->whereNumber('id');
+        });
 
         // Customer Management
         Route::get('/customers', [AdminCustomerController::class, 'index']);
@@ -315,7 +330,6 @@ Route::get(
 
 // Activity Logs
 Route::get('/activity-logs', [AdminActivityLogController::class, 'index']);
-Route::put('/activity-logs/{id}', [AdminActivityLogController::class, 'update']);
 
 // Promotions / Advertisements
 Route::prefix('advertisements')->controller(AdminAdvertisementController::class)->group(function () {
@@ -726,6 +740,7 @@ Route::middleware(['auth:sanctum', 'customer.not_blocked'])->prefix('customer')-
      Route::post('/auth/logout', [CustomerAuthController::class, 'logout']);
 
     Route::get('/home', [CustomerHomeController::class, 'index']);
+    Route::post('/advertisements/events', [CustomerHomeController::class, 'trackAdvertisements'])->middleware('throttle:120,1');
 
     Route::post('/addresses', [CustomerAddressController::class, 'store']);
     Route::get('/addresses', [CustomerAddressController::class, 'index']);
@@ -754,11 +769,18 @@ Route::middleware(['auth:sanctum', 'customer.not_blocked'])->prefix('customer')-
     Route::delete('/cart/items/{itemId}', [CustomerCartController::class,'removeItem']);
     Route::delete('/cart', [CustomerCartController::class,'clear']);
     Route::post('/cart/apply-coupon', [CustomerCartController::class, 'applyCoupon']);
+    Route::post('/cart/remove-coupon', [CustomerCartController::class, 'removeCoupon']);
+    Route::delete('/cart/coupon', [CustomerCartController::class, 'removeCoupon']);
+    Route::get('/coupons', [CustomerCartController::class, 'availableCoupons']);
+    Route::get('/cart/available-coupons', [CustomerCartController::class, 'availableCoupons']);
     Route::post('/orders', [CustomerOrderController::class, 'store']);
     Route::get('/orders/{id}', [CustomerOrderController::class,'show']);
     Route::get('/orders', [CustomerOrderController::class,'index']);
     Route::post('/orders/{id}/reorder', [CustomerOrderController::class, 'reorder']);
     Route::post('/orders/{id}/cancel', [CustomerOrderController::class, 'cancel']);
+    Route::post('/orders/{id}/complaint', [CustomerRefundController::class, 'store']);
+    Route::get('/orders/{id}/complaint', [CustomerRefundController::class, 'show']);
+    Route::get('/refunds', [CustomerRefundController::class, 'index']);
     Route::post('/orders/{id}/review', [CustomerReviewController::class, 'store']);
     Route::get('/orders/{id}/review', [CustomerReviewController::class, 'show']);
     Route::get('/reviews', [CustomerReviewController::class, 'index']);

@@ -123,6 +123,9 @@ class PayUOrderPaymentService
                             'txnid'        => $txnid,
                         ]);
 
+                        app(\App\Services\Notification\AdminNotificationService::class)
+                            ->paymentAfterCancellation($lockedOrder, $txnid);
+
                         $notifications->paymentReceivedForCancelledOrder($lockedOrder);
                     } else {
                         // Notify restaurant and customer that paid online order is confirmed
@@ -170,6 +173,12 @@ class PayUOrderPaymentService
             });
 
             if ($markedFailed) {
+                // A customer backing out of the gateway is not an issue admins can act on
+                if ($unmappedStatus !== 'usercancelled') {
+                    app(\App\Services\Notification\AdminNotificationService::class)
+                        ->paymentFailed($order->fresh(), $txnid);
+                }
+
                 return self::FAILED;
             }
 

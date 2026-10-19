@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 
+use App\Http\Controllers\Api\Admin\AdminNotificationController;
 use App\Http\Controllers\Api\Admin\AdminRestaurantOfferController;
 use App\Http\Controllers\Api\SuperAdmin\SuperAdminAdminController;
 use App\Http\Controllers\Api\SuperAdmin\SuperAdminAdvertisementController;
@@ -13,6 +14,7 @@ use App\Http\Controllers\Api\SuperAdmin\SuperAdminFinanceController;
 use App\Http\Controllers\Api\SuperAdmin\SuperAdminMenuItemController;
 use App\Http\Controllers\Api\SuperAdmin\SuperAdminOrderController;
 use App\Http\Controllers\Api\SuperAdmin\SuperAdminPaymentController;
+use App\Http\Controllers\Api\SuperAdmin\SuperAdminRefundController;
 use App\Http\Controllers\Api\SuperAdmin\SuperAdminReportController;
 use App\Http\Controllers\Api\SuperAdmin\SuperAdminRestaurantApplicationController;
 use App\Http\Controllers\Api\SuperAdmin\SuperAdminRestaurantController;
@@ -22,8 +24,11 @@ use App\Http\Controllers\Api\SuperAdmin\SuperAdminRoleController;
 use App\Http\Controllers\Api\SuperAdmin\SuperAdminSettlementController;
 use App\Http\Controllers\Api\SuperAdmin\SuperAdminRestaurantSettlementController;
 use App\Http\Controllers\Api\SuperAdmin\SuperAdminSupportController;
-use App\Http\Controllers\Api\SuperAdmin\ChangeActivityController;
+use App\Http\Controllers\Api\SuperAdmin\SuperAdminActivityLogController;
 use App\Http\Controllers\Api\SuperAdmin\SuperAdminSettingController;
+use App\Http\Controllers\Api\SuperAdmin\SuperAdminCouponController;
+use App\Http\Controllers\Api\SuperAdmin\SuperAdminMarketingController;
+use App\Http\Controllers\Api\SuperAdmin\SuperAdminNotificationController;
 
 /*
 |--------------------------------------------------------------------------
@@ -46,13 +51,14 @@ Route::prefix('super-admin')->group(function () {
     Route::post('/login', [SuperAdminAuthController::class, 'login'])
         ->middleware('throttle:10,1');
 
-    Route::middleware(['super_admin.auth', 'change.activity'])->group(function () {
+    Route::middleware(['super_admin.auth', 'admin.activity'])->group(function () {
 
         Route::get('/me', [SuperAdminAuthController::class, 'me']);
+        Route::put('/profile', [SuperAdminAuthController::class, 'updateProfile']);
 
         Route::post('/logout', [SuperAdminAuthController::class, 'logout']);
 
-        Route::get('/activity-events', [ChangeActivityController::class, 'index'])
+        Route::get('/activity-logs', [SuperAdminActivityLogController::class, 'index'])
             ->middleware('super_admin.can:activityLogs');
 
         // Dashboard (platform-wide figures)
@@ -128,7 +134,6 @@ Route::prefix('super-admin')->group(function () {
             Route::get('/', 'index');
             Route::post('/cancel', 'cancel')->middleware('super_admin.can:orders,Edit');
             Route::patch('/{id}/status', 'updateStatus')->whereNumber('id');
-            Route::patch('/{id}/rider', 'assignRider')->whereNumber('id');
         });
 
         // Payments & Transactions page
@@ -155,6 +160,14 @@ Route::prefix('super-admin')->group(function () {
         });
         Route::put('/finance/riders/{id}/status', [AdminRiderEarningController::class, 'updateStatus'])->whereNumber('id')->middleware('super_admin.can:finance,Approve');
         Route::post('/finance/riders/{id}/cod-settle', [AdminRiderEarningController::class, 'settleCod'])->whereNumber('id')->middleware('super_admin.can:finance,Approve');
+
+        // Refunds Command Center page
+        Route::prefix('refunds')->controller(SuperAdminRefundController::class)->middleware('super_admin.can:finance')->group(function () {
+            Route::get('/', 'index');
+            Route::get('/{id}', 'show')->whereNumber('id');
+            Route::post('/{id}/approve', 'approve')->whereNumber('id')->middleware('super_admin.can:finance,Approve');
+            Route::post('/{id}/reject', 'reject')->whereNumber('id')->middleware('super_admin.can:finance,Reject');
+        });
 
         // Settlements page: restaurant weekly settlements (Monday to Monday, paid Tuesday)
         Route::prefix('settlements/restaurants')->controller(SuperAdminRestaurantSettlementController::class)->middleware('super_admin.can:finance')->group(function () {
@@ -231,12 +244,26 @@ Route::prefix('super-admin')->group(function () {
             Route::put('/package-durations/{id}', 'updateDuration')->whereNumber('id')->middleware('super_admin.can:marketing,Approve');
         });
 
+        // Advertisements page (Marketing Overview): summary cards + impressions/clicks chart
+        Route::prefix('marketing')->controller(SuperAdminMarketingController::class)->middleware('super_admin.can:marketing')->group(function () {
+            Route::get('/overview', 'overview');
+            Route::get('/performance', 'performance');
+        });
+
+        // Coupons & Promotions page
+        Route::prefix('coupons')->controller(SuperAdminCouponController::class)->middleware('super_admin.can:marketing')->group(function () {
+            Route::get('/', 'index');
+            Route::get('/options', 'options');
+            Route::get('/analytics', 'analyticsReport');
+            Route::post('/', 'store')->middleware('super_admin.can:marketing,Create');
+            Route::patch('/{id}/status', 'toggleStatus')->whereNumber('id')->middleware('super_admin.can:marketing,Edit');
+            Route::delete('/{id}', 'destroy')->whereNumber('id')->middleware('super_admin.can:marketing,Delete');
+        });
+
         // Restaurant Applications page
         Route::prefix('restaurant-applications')->controller(SuperAdminRestaurantApplicationController::class)->middleware('super_admin.can:restaurantApplications')->group(function () {
             Route::get('/', 'index');
-            Route::get('/export', 'export')->middleware('super_admin.can:restaurantApplications,Export');
-            Route::get('/{id}', 'show')->whereNumber('id');
-            Route::post('/{id}/assign', 'assign')->whereNumber('id')->middleware('super_admin.can:restaurantApplications,Edit');
+            Route::get('/export', 'export')->middleware('super_admin.can:restaurantApplications,Export');            Route::get('/{id}', 'show')->whereNumber('id');
             Route::post('/{id}/documents/{key}/verify', 'verifyDocument')->whereNumber('id')->whereIn('key', ['fssai', 'gst', 'pan', 'bank'])->middleware('super_admin.can:restaurantApplications,Edit');
             Route::post('/{id}/approve', 'approve')->whereNumber('id')->middleware('super_admin.can:restaurantApplications,Approve');
             Route::post('/{id}/reject', 'reject')->whereNumber('id')->middleware('super_admin.can:restaurantApplications,Reject');
@@ -244,6 +271,24 @@ Route::prefix('super-admin')->group(function () {
             Route::post('/{id}/notes', 'storeNote')->whereNumber('id')->middleware('super_admin.can:restaurantApplications,Edit');
             Route::put('/{id}/commission', 'updateCommission')->whereNumber('id');
             Route::post('/{id}/setup/{step}', 'verifySetup')->whereNumber('id')->whereIn('step', ['restaurant_setup', 'menu_setup', 'live'])->middleware('super_admin.can:restaurantApplications,Approve');
+        });
+
+        // Header bell inbox (same data as the Admin panel; filtered by role permissions)
+        Route::prefix('admin-notifications')->controller(AdminNotificationController::class)->group(function () {
+            Route::get('/', 'index');
+            Route::get('/unread-count', 'unreadCount');
+            Route::post('/read-all', 'markAllRead');
+            Route::get('/settings', 'settings');
+            Route::put('/settings', 'updateSettings');
+            Route::post('/{id}/read', 'markRead')->whereNumber('id');
+            Route::post('/{id}/unread', 'markUnread')->whereNumber('id');
+        });
+
+        // Communication & Notifications (Command Center)
+        Route::prefix('notifications')->controller(SuperAdminNotificationController::class)->middleware('super_admin.can:notifications')->group(function () {
+            Route::get('/', 'index');
+            Route::post('/broadcast', 'store')->middleware('super_admin.can:notifications,Create');
+            Route::get('/export', 'export')->middleware('super_admin.can:notifications,Export');
         });
 
     });

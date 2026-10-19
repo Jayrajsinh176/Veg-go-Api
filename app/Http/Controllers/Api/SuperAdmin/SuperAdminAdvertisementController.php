@@ -168,6 +168,7 @@ class SuperAdminAdvertisementController extends Controller
             ->paginate($validated['per_page'] ?? 10);
 
         $admins = $this->adminsFor(collect($paginator->items()));
+        $stats = $this->service->eventStats(collect($paginator->items())->pluck('id'));
 
         return response()->json([
             'success' => true,
@@ -175,7 +176,8 @@ class SuperAdminAdvertisementController extends Controller
             'data' => [
                 'counts' => $counts,
                 'advertisements' => collect($paginator->items())
-                    ->map(fn ($advertisement) => $this->formatAdvertisement($advertisement, $admins))
+                    ->map(fn ($advertisement) => $this->formatAdvertisement($advertisement, $admins)
+                        + ['stats' => $stats->get($advertisement->id)])
                     ->values(),
                 'pagination' => [
                     'current_page' => $paginator->currentPage(),
@@ -709,6 +711,8 @@ class SuperAdminAdvertisementController extends Controller
         $histories = $advertisement->histories()->latest('id')->get();
 
         $data = $this->formatAdvertisement($advertisement, $this->adminsFor(collect([$advertisement])));
+
+        $data['stats'] = $this->service->eventStats(collect([$advertisement->id]))->get($advertisement->id);
 
         $data['payments'] = $advertisement->payments
             ->sortByDesc('id')

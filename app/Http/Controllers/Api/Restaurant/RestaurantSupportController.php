@@ -42,6 +42,9 @@ class RestaurantSupportController extends Controller
             'image_path' => $imagePath,
         ]);
 
+        app(\App\Services\Notification\AdminNotificationService::class)
+            ->supportTicketCreated($ticket, 'restaurant', $restaurant->restaurant_name);
+
         return response()->json([
             'success' => true,
             'message' => 'Support ticket created successfully.',

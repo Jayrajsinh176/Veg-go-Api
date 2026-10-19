@@ -62,6 +62,9 @@ class CustomerSupportController extends Controller
             'image_path'  => $imagePath,
         ]);
 
+        app(\App\Services\Notification\AdminNotificationService::class)
+            ->supportTicketCreated($ticket, 'customer', $customer->name ?? null);
+
         return response()->json([
             'success' => true,
             'message' => 'Support ticket created successfully.',

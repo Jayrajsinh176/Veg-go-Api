@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\SuperAdmin;
 
 use App\Http\Controllers\Controller;
+use App\Models\AdminActivityLog;
 use App\Models\ChangeActivityEvent;
 use App\Models\Rider;
 use App\Models\RiderBankDetail;
@@ -446,21 +447,24 @@ class SuperAdminSettlementController extends Controller
                 'status' => $row->status,
             ]);
 
-        $admin = ChangeActivityEvent::query()
-            ->where('module', 'Settlements')
-            ->where('path', 'not like', '%/settlements/restaurants%')
-            ->latest()
-            ->limit(15)
-            ->get()
+        // admin_activity_logs from now on; change_activity_events holds older actions
+        $admin = collect([AdminActivityLog::query(), ChangeActivityEvent::query()])
+            ->flatMap(fn ($query) => $query
+                ->where('module', 'Settlements')
+                ->where('path', 'like', '%/super-admin/settlements%')
+                ->where('path', 'not like', '%/settlements/restaurants%')
+                ->latest('id')
+                ->limit(15)
+                ->get())
             ->map(fn ($row) => [
                 'at' => $row->created_at,
                 'title' => match ($row->action) {
-                    'Run Batch' => 'Settlement batch run manually.',
-                    'Mark Paid' => 'Settlement marked as paid.',
-                    'Retry' => 'Failed payout retried.',
-                    'Update Hold' => 'Settlement hold status changed.',
-                    'Settle Cod' => 'COD cash settlement recorded.',
-                    'Contact' => 'Rider contacted about settlement.',
+                    'Settlement Batch Run', 'Run Batch' => 'Settlement batch run manually.',
+                    'Settlement Marked Paid', 'Mark Paid' => 'Settlement marked as paid.',
+                    'Settlement Retry', 'Retry' => 'Failed payout retried.',
+                    'Settlement Hold', 'Update Hold' => 'Settlement hold status changed.',
+                    'COD Settled', 'Settle Cod' => 'COD cash settlement recorded.',
+                    'Rider Contacted', 'Contact' => 'Rider contacted about settlement.',
                     default => $row->action . '.',
                 },
                 'actor' => $row->admin_name,

@@ -89,14 +89,29 @@ $order = RestaurantOrder::with([
     'items',
     'payment',
     'statusHistories',
+    'latestRefund',
 ])
 ->where('restaurant_id', $restaurant->id)->visibleToRestaurant()
 ->findOrFail($orderId);
 
+    $refund = $order->latestRefund;
+
     return response()->json([
         'success' => true,
         'message' => 'Order details fetched successfully.',
-        'data' => $order,
+        'data' => array_merge($order->toArray(), [
+            'has_complaint' => $refund !== null && $refund->scenario === 'post_delivery_complaint',
+            'complaint'     => ($refund && $refund->scenario === 'post_delivery_complaint') ? [
+                'id'                   => $refund->id,
+                'refund_number'        => $refund->refund_number,
+                'status'               => $refund->status,
+                'reason'               => $refund->reason,
+                'customer_description' => $refund->customer_note,
+                'customer_photo_url'   => $refund->proof_image_url,
+                'penalty_deducted'     => $refund->status === 'completed' ? (float) $refund->amount : 0.0,
+                'created_at'           => $refund->created_at?->toIso8601String(),
+            ] : null,
+        ]),
     ]);
 }
 

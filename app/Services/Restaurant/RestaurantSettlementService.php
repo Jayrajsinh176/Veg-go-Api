@@ -12,8 +12,8 @@ use Carbon\Carbon;
 /**
  * Restaurant weekly settlement.
  *
- * A cycle runs Monday 00:00 to the next Monday 00:00 and is paid out on the
- * Tuesday morning after it closes (config/settlement.php payout_time).
+ * A cycle runs Monday 00:00 to Sunday 23:59 (next Monday 00:00) and is paid out on the
+ * Monday morning at 09:00 AM (config/settlement.php payout_time).
  * Every wallet entry is linked to the cycle it was made in, so the payout is
  * the wallet balance belonging to the closed cycle (and earlier unpaid ones).
  *
@@ -25,7 +25,7 @@ use Carbon\Carbon;
 class RestaurantSettlementService
 {
     /**
-     * Cycle containing $at: week_start (Mon), week_end (Sun), payout_date (Tue)
+     * Cycle containing $at: week_start (Mon), week_end (Sun), payout_date (Mon)
      */
     public function cycleFor(?Carbon $at = null): array
     {
@@ -34,7 +34,7 @@ class RestaurantSettlementService
         return [
             'week_start' => $start->copy(),
             'week_end' => $start->copy()->addDays(6),
-            'payout_date' => $start->copy()->addDays(8),
+            'payout_date' => $start->copy()->addDays(7),
         ];
     }
 

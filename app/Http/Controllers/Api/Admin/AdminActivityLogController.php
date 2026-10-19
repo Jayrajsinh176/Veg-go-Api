@@ -7,12 +7,9 @@ use App\Models\AdminActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
-use Illuminate\Validation\Rule;
 
 class AdminActivityLogController extends Controller
 {
-    private const REVIEW_STATUSES = ['Needs Review', 'Reviewed', 'Escalated'];
-
     /**
      * List activity logs (newest first)
      */
@@ -29,12 +26,17 @@ class AdminActivityLogController extends Controller
             'limit' => ['nullable', 'integer', 'min:1', 'max:2000'],
         ]);
 
+        // The admin panel only sees admin panel actions; super admin
+        // actions are listed on the super admin Activity Logs page
         $logs = AdminActivityLog::query()
+            ->where('panel', AdminActivityLog::PANEL_ADMIN)
             ->when($validated['search'] ?? null, function ($query, $term) {
                 $query->where(function ($inner) use ($term) {
                     foreach (['admin_name', 'admin_email', 'action', 'module', 'target', 'change_summary'] as $column) {
                         $inner->orWhere($column, 'like', "%{$term}%");
                     }
+
+                    $inner->orWhereIn('target', AdminActivityLog::restaurantTargetsMatching($term));
                 });
             })
             ->when($validated['module'] ?? null, fn ($query, $module) => $query->where('module', $module))
@@ -55,55 +57,15 @@ class AdminActivityLogController extends Controller
             ->limit($validated['limit'] ?? 500)
             ->get();
 
+        $restaurantNames = AdminActivityLog::restaurantTargetNames($logs);
+
         return response()->json([
             'message' => 'Activity logs fetched successfully.',
-            'data' => $logs->map(fn ($log) => $this->transform($log))->values(),
+            'data' => $logs->map(fn ($log) => $this->transform($log, $restaurantNames))->values(),
         ]);
     }
 
-    /**
-     * Update review status / action label and add an audit note
-     */
-    public function update(Request $request, $id)
-    {
-        $log = AdminActivityLog::find($id);
-
-        if (!$log) {
-            return response()->json([
-                'message' => 'Activity log not found.',
-            ], 404);
-        }
-
-        $validated = $request->validate([
-            'review_status' => ['required', Rule::in(self::REVIEW_STATUSES)],
-            'action' => ['nullable', 'string', 'max:255'],
-            'note' => ['nullable', 'string', 'max:2000'],
-        ]);
-
-        $notes = $log->notes ?? [];
-
-        if (filled($validated['note'] ?? null)) {
-            $notes[] = [
-                'id' => (int) (microtime(true) * 1000),
-                'author' => $request->user()?->name ?? 'Admin',
-                'text' => trim($validated['note']),
-                'time' => now()->format('H:i'),
-            ];
-        }
-
-        $log->update([
-            'review_status' => $validated['review_status'],
-            'action' => filled($validated['action'] ?? null) ? $validated['action'] : $log->action,
-            'notes' => $notes,
-        ]);
-
-        return response()->json([
-            'message' => 'Audit record updated successfully.',
-            'data' => $this->transform($log->fresh()),
-        ]);
-    }
-
-    private function transform(AdminActivityLog $log): array
+    private function transform(AdminActivityLog $log, array $restaurantNames = []): array
     {
         $created = Carbon::parse($log->created_at);
         $name = $log->admin_name ?: 'Unknown Admin';
@@ -127,7 +89,7 @@ class AdminActivityLogController extends Controller
 
             'action' => $log->action,
             'module' => $log->module,
-            'target' => $log->target ?? '—',
+            'target' => $restaurantNames[$log->target] ?? ($log->target ?? '—'),
 
             'change' => $log->change_summary ?? $log->action,
             'oldValue' => $log->old_value ?? '—',
@@ -138,21 +100,12 @@ class AdminActivityLogController extends Controller
             'time' => $created->format('H:i'),
             'createdAt' => $created->toIso8601String(),
 
-            'reason' => $log->reason ?? 'No reason provided.',
+            // Only set for actions where a reason is typed in (reject, block…)
+            'reason' => $log->reason,
             'details' => $log->details ?? $log->change_summary ?? $log->action,
 
-            'ip' => $log->ip_address ?? '—',
             'device' => $this->device($log->user_agent),
-            'location' => 'Admin Operations Console',
             'source' => $log->source ?? 'VegGo Admin Portal',
-
-            'sessionId' => $log->session_id ?? '—',
-            'requestId' => $log->request_id ?? '—',
-
-            'riskLevel' => $log->risk_level,
-            'reviewStatus' => $log->review_status,
-
-            'notes' => $log->notes ?? [],
         ];
     }
 

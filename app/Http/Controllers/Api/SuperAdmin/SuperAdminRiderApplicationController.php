@@ -275,8 +275,6 @@ class SuperAdminRiderApplicationController extends Controller
             'verification' => $verification,
             'identityVerification' => $identityStatus,
             'licenseVerification' => $licenseStatus,
-            'assignedAdmin' => 'Unassigned',
-            'assignedInitial' => '',
             'status' => $applicationStatus,
             'vehicle' => $rider->vehicleType?->name ?: '—',
             'vehicleNumber' => $rider->vehicle_number ?: '—',

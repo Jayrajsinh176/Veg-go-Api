@@ -237,6 +237,7 @@ class SuperAdminFinanceController extends Controller
                 'restaurant_orders.earning_status',
                 'restaurant_orders.subtotal',
                 'restaurant_orders.delivery_charge',
+                'restaurant_orders.packing_charge',
                 'restaurant_orders.tax',
                 'restaurant_orders.discount',
                 'restaurant_orders.total_amount',
@@ -258,7 +259,7 @@ class SuperAdminFinanceController extends Controller
                 $order->earning_value = match ($order->earning_status) {
                     'credited' => (float) $order->restaurant_earning,
                     'reversed' => 0.0,
-                    default => round((float) $order->subtotal - $commission, 2),
+                    default => round((float) $order->subtotal - $commission + (float) ($order->packing_charge ?? 0), 2),
                 };
                 $order->report_at = Carbon::parse($order->placed_at ?? $order->created_at);
             });

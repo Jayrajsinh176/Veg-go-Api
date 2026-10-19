@@ -51,6 +51,8 @@ protected $fillable = [
 ];
 
 protected $casts = [
+    'subtotal' => 'decimal:2',
+    'packing_charge' => 'decimal:2',
     'commission_percentage' => 'decimal:2',
     'commission_amount' => 'decimal:2',
     'restaurant_earning' => 'decimal:2',
@@ -123,6 +125,19 @@ public function deliveryAddress()
     public function review()
     {
         return $this->hasOne(RestaurantReview::class, 'restaurant_order_id');
+    }
+
+    /**
+     * Refunds / Complaints
+     */
+    public function refunds()
+    {
+        return $this->hasMany(OrderRefund::class, 'order_id');
+    }
+
+    public function latestRefund()
+    {
+        return $this->hasOne(OrderRefund::class, 'order_id')->latestOfMany();
     }
 
     /**

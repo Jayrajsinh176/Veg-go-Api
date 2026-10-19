@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\DB;
  * Restaurant earning per order.
  *
  *   commission = subtotal × rate (restaurant's own rate, else 30%)
- *   earning    = subtotal − commission
+ *   earning    = subtotal − commission + packing_charge
  *
  * ready_for_pickup -> calculate()  : figures saved, earning_status stays pending
  * delivered        -> credit()     : wallet credited, earning_status credited
@@ -35,12 +35,15 @@ class RestaurantEarningService
         $restaurant ??= $order->restaurant;
 
         $rate = $restaurant->commissionRate();
-        $commission = round(((float) $order->subtotal * $rate) / 100, 2);
+        $subtotal = (float) $order->subtotal;
+        $commission = round(($subtotal * $rate) / 100, 2);
+        $packing = (float) ($order->packing_charge ?? 0);
+        $earning = round($subtotal - $commission + $packing, 2);
 
         $order->update([
             'commission_percentage' => $rate,
             'commission_amount' => $commission,
-            'restaurant_earning' => round((float) $order->subtotal - $commission, 2),
+            'restaurant_earning' => $earning,
         ]);
 
         return $order;
@@ -84,6 +87,7 @@ class RestaurantEarningService
             $settlement->increment('orders_count');
             $settlement->increment('gross_sales', (float) $order->subtotal);
             $settlement->increment('commission', (float) $order->commission_amount);
+            $settlement->increment('packing_charges', (float) ($order->packing_charge ?? 0));
             $settlement->increment('total_amount', $earning);
 
             $order->update([
@@ -142,13 +146,17 @@ class RestaurantEarningService
     }
 
     /**
-     * "Subtotal ₹360.00 − Commission 30% ₹108.00 = Earning ₹252.00"
+     * "Subtotal ₹360.00 − Commission 30% ₹108.00 + Packing ₹15.00 = Earning ₹267.00"
      */
     public function breakdown(RestaurantOrder $order): string
     {
+        $packing = (float) ($order->packing_charge ?? 0);
+        $packingStr = $packing > 0 ? ' + Packing ₹' . number_format($packing, 2) : '';
+
         return 'Subtotal ₹' . number_format((float) $order->subtotal, 2)
             . ' − Commission ' . rtrim(rtrim(number_format((float) $order->commission_percentage, 2), '0'), '.') . '%'
             . ' ₹' . number_format((float) $order->commission_amount, 2)
+            . $packingStr
             . ' = Earning ₹' . number_format((float) $order->restaurant_earning, 2);
     }
 }

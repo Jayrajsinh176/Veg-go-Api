@@ -8,6 +8,7 @@ use App\Models\AdminActivityLog;
 use App\Models\City;
 use App\Models\DeliveryOrder;
 use App\Models\OrderStatusHistory;
+use App\Models\Restaurant;
 use App\Models\RestaurantOrder;
 use App\Models\Rider;
 use App\Services\Order\OrderCancellationService;
@@ -92,7 +93,7 @@ class SuperAdminOrderController extends Controller
         $orders = RestaurantOrder::query()
             ->when($since, fn ($query) => $query->whereRaw('COALESCE(placed_at, created_at) >= ?', [$since]))
             ->with([
-                'restaurant:id,restaurant_name',
+                'restaurant:id,restaurant_name,commission_percentage',
                 'customer:id,name,phone,email',
                 'rider:id,name,first_name,last_name,phone,vehicle_type_id,latitude,longitude,last_location_at',
                 'rider.vehicleType:id,name',
@@ -106,20 +107,35 @@ class SuperAdminOrderController extends Controller
 
         $restaurantCities = $this->restaurantCities($orders->pluck('restaurant_id')->unique()->all());
 
-        // Rider acceptance time of the matching delivery orders
-        $riderAcceptedAt = DeliveryOrder::query()
-            ->whereIn('order_number', $orders->whereNotNull('rider_id')->pluck('order_number'))
-            ->pluck('accepted_at', 'order_number');
+        // Rider acceptance time and earning of the matching delivery orders
+        $deliveryOrders = DeliveryOrder::query()
+            ->whereIn('order_number', $orders->pluck('order_number')->filter())
+            ->get(['order_number', 'accepted_at', 'rider_earning'])
+            ->keyBy('order_number');
+
+        // Payout breakdown is for the super admin only
+        $showEarnings = (bool) $request->user()?->isSuperAdmin();
+        $defaultRate = $showEarnings ? (new Restaurant())->commissionRate() : 0.0;
 
         return response()->json([
             'message' => 'Orders fetched successfully.',
             'data' => [
                 'orders' => $orders
-                    ->map(fn ($order) => $this->transform(
-                        $order,
-                        $restaurantCities[$order->restaurant_id] ?? null,
-                        $riderAcceptedAt[$order->order_number] ?? null
-                    ))
+                    ->map(function ($order) use ($restaurantCities, $deliveryOrders, $showEarnings, $defaultRate) {
+                        $delivery = $deliveryOrders[$order->order_number] ?? null;
+
+                        $row = $this->transform(
+                            $order,
+                            $restaurantCities[$order->restaurant_id] ?? null,
+                            $order->rider_id ? $delivery?->accepted_at : null
+                        );
+
+                        if ($showEarnings) {
+                            $row['earnings'] = $this->earnings($order, $delivery?->rider_earning, $defaultRate);
+                        }
+
+                        return $row;
+                    })
                     ->values(),
                 'stats' => $this->stats($since),
                 'cities' => City::query()->orderBy('name')->pluck('name')->values(),
@@ -232,63 +248,7 @@ class SuperAdminOrderController extends Controller
         ]);
     }
 
-    // =====================================================
-    // ASSIGN RIDER (PATCH /api/super-admin/orders/{id}/rider)
-    // =====================================================
 
-    public function assignRider(Request $request, $id)
-    {
-        $validated = $request->validate([
-            'rider_id' => ['required', 'integer', 'exists:riders,id'],
-        ]);
-
-        $order = RestaurantOrder::find($id);
-
-        if (!$order) {
-            return response()->json(['message' => 'Order not found.'], 404);
-        }
-
-        if (in_array($order->order_status, ['delivered', 'cancelled'], true)) {
-            return response()->json([
-                'message' => 'Riders cannot be assigned to delivered or cancelled orders.',
-            ], 422);
-        }
-
-        $rider = Rider::find($validated['rider_id']);
-
-        if ($rider->status !== 'approved') {
-            return response()->json([
-                'message' => 'Only approved delivery partners can be assigned.',
-            ], 422);
-        }
-
-        DB::transaction(function () use ($order, $rider) {
-            $order->update(['rider_id' => $rider->id]);
-
-            $deliveryOrder = DeliveryOrder::where('order_number', $order->order_number)->first();
-
-            if ($deliveryOrder && !in_array($deliveryOrder->status, ['delivered', 'cancelled'], true)) {
-                $deliveryOrder->rider_id = $rider->id;
-
-                if ($deliveryOrder->status === 'available') {
-                    $deliveryOrder->status = 'accepted';
-                    $deliveryOrder->accepted_at = now();
-                }
-
-                if ($order->pickup_otp && !$deliveryOrder->pickup_otp) {
-                    $deliveryOrder->pickup_otp = $order->pickup_otp;
-                }
-
-                $deliveryOrder->save();
-            }
-        });
-
-        $this->logOrder($request, $order, 'Assigned Rider', 'Rider ' . $this->riderName($rider) . ' (#' . $rider->id . ') assigned');
-
-        return response()->json([
-            'message' => 'Rider assigned successfully.',
-        ]);
-    }
 
     // =====================================================
     // CANCEL (POST /api/super-admin/orders/cancel)
@@ -425,6 +385,58 @@ class SuperAdminOrderController extends Controller
             'eta' => $this->eta($order, $status),
             'currentLocation' => $this->currentLocation($order, $rider),
             'locationUpdatedIso' => $this->iso($rider?->last_location_at),
+        ];
+    }
+
+    /**
+     * Who earns what from one order (same rules as the Finance page):
+     *   restaurant = subtotal − commission + packing (saved figure once credited)
+     *   rider      = delivery_orders.rider_earning, else the delivery charge
+     *   profit     = final amount − restaurant − rider
+     */
+    private function earnings(RestaurantOrder $order, $riderEarning, float $defaultRate): array
+    {
+        if ($order->order_status === 'cancelled' || $order->earning_status === 'reversed') {
+            return [
+                'restaurant' => 0.0,
+                'commission' => 0.0,
+                'commissionRate' => 0.0,
+                'rider' => 0.0,
+                'profit' => 0.0,
+                'settled' => false,
+                'cancelled' => true,
+            ];
+        }
+
+        $subtotal = (float) $order->subtotal;
+        $settled = $order->earning_status === 'credited';
+
+        // Saved figures exist once calculate() ran (it sets commission_percentage);
+        // before that the amount columns are just 0.00 defaults
+        $calculated = $order->commission_percentage !== null;
+
+        $rate = $calculated
+            ? (float) $order->commission_percentage
+            : ($order->restaurant?->commission_percentage !== null ? (float) $order->restaurant->commission_percentage : $defaultRate);
+
+        $commission = $calculated
+            ? (float) $order->commission_amount
+            : round($subtotal * $rate / 100, 2);
+
+        $restaurant = $calculated
+            ? (float) $order->restaurant_earning
+            : round($subtotal - $commission + (float) ($order->packing_charge ?? 0), 2);
+
+        $rider = round((float) ($riderEarning ?? $order->delivery_charge ?? 0), 2);
+
+        return [
+            'restaurant' => $restaurant,
+            'commission' => $commission,
+            'commissionRate' => $rate,
+            'rider' => $rider,
+            'profit' => round((float) $order->total_amount - $restaurant - $rider, 2),
+            'settled' => $settled,
+            'cancelled' => false,
         ];
     }
 

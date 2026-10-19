@@ -22,6 +22,16 @@ use Illuminate\Validation\Rule;
 
 class SuperAdminRestaurantController extends Controller
 {
+    /**
+     * Indian mobile accepted by the restaurant app's OTP login
+     */
+    private const MOBILE_REGEX = '/^[6-9]\d{9}$/';
+
+    private const MOBILE_MESSAGES = [
+        'mobile.regex' => 'Please enter a valid 10 digit mobile number starting with 6, 7, 8 or 9.',
+        'mobile.unique' => 'A restaurant is already registered with this mobile number.',
+    ];
+
     use ResolvesRestaurantLocation;
 
     /**
@@ -173,7 +183,8 @@ class SuperAdminRestaurantController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'owner' => ['required', 'string', 'max:255'],
-            'mobile' => ['required', 'digits:10', 'unique:restaurants,mobile'],
+            // Same rule as the restaurant app's OTP login, so the owner can sign in
+            'mobile' => ['required', 'regex:' . self::MOBILE_REGEX, 'unique:restaurants,mobile'],
             'email' => ['required', 'email', 'max:255'],
             'is_whatsapp_same' => ['required', 'boolean'],
             'whatsapp_number' => ['required_if:is_whatsapp_same,0', 'nullable', 'digits:10'],
@@ -207,7 +218,7 @@ class SuperAdminRestaurantController extends Controller
             'upi_holder_name' => ['required', 'string', 'max:100'],
             'fssai_number' => ['required', 'digits:14'],
             'fssai_image' => ['required', 'file', 'mimes:jpg,jpeg,png,pdf', 'max:5120'],
-        ]);
+        ], self::MOBILE_MESSAGES);
 
         $workingHours = $this->validatedWorkingHours($validated);
         $uploadedPaths = [];
@@ -353,9 +364,9 @@ class SuperAdminRestaurantController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'owner' => ['required', 'string', 'max:255'],
-            'mobile' => ['required', 'digits:10', Rule::unique('restaurants', 'mobile')->ignore($restaurant->id)],
+            'mobile' => ['required', 'regex:' . self::MOBILE_REGEX, Rule::unique('restaurants', 'mobile')->ignore($restaurant->id)],
             'email' => ['nullable', 'email', 'max:255'],
-        ]);
+        ], self::MOBILE_MESSAGES);
 
         $values = [
             'restaurant_name' => trim($validated['name']),
