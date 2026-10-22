@@ -53,7 +53,7 @@ return [
         'api_key' => env('GOOGLE_MAPS_API_KEY'),
         // When false, distance/ETA falls back to straight-line (haversine) calculation.
         'enabled' => (bool) env('GOOGLE_MAPS_ENABLED', false),
-        'timeout' => (int) env('GOOGLE_MAPS_TIMEOUT', 5),
+        'timeout' => (int) env('GOOGLE_MAPS_TIMEOUT', 3),
         // Route results are cached (seconds) so the same trip is not billed twice.
         'cache_ttl' => (int) env('GOOGLE_MAPS_CACHE_TTL', 21600),
     ],

@@ -10,6 +10,7 @@ use App\Models\RiderWalletTransaction;
 use App\Models\RiderReferral;
 use Illuminate\Http\Request;
 use App\Services\Rider\RiderEarningService;
+use App\Services\Maps\GoogleMapsService;
 use App\Models\RestaurantOrder;
 use App\Models\RiderWeeklySettlement;
 
@@ -21,10 +22,13 @@ class RiderOrderService
 
         protected RiderSettlementService $settlementService;
 
-        public function __construct(RiderEarningService $earningService, RiderSettlementService $settlementService)
+        protected GoogleMapsService $mapsService;
+
+        public function __construct(RiderEarningService $earningService, RiderSettlementService $settlementService, GoogleMapsService $mapsService)
 {
     $this->earningService = $earningService;
     $this->settlementService = $settlementService;
+    $this->mapsService = $mapsService;
 }
 
    public function acceptOrder(Rider $rider, DeliveryOrder $order)
@@ -389,12 +393,20 @@ public function orders(Rider $rider, Request $request)
 
 $formattedOrders = $orders->map(function ($order) {
 
-    $distance = $this->calculateDistance(
-        $order->pickup_latitude,
-        $order->pickup_longitude,
-        $order->delivery_latitude,
-        $order->delivery_longitude
-    );
+    // Display only: road distance via Google (earning still uses calculateDistance).
+    $distance = null;
+
+    if (
+        $order->pickup_latitude && $order->pickup_longitude &&
+        $order->delivery_latitude && $order->delivery_longitude
+    ) {
+        $distance = $this->mapsService->routeDistance(
+            (float) $order->pickup_latitude,
+            (float) $order->pickup_longitude,
+            (float) $order->delivery_latitude,
+            (float) $order->delivery_longitude
+        )['distance_km'];
+    }
 
     return [
 
@@ -408,7 +420,7 @@ $formattedOrders = $orders->map(function ($order) {
 
         'delivery_address' => $order->delivery_address,
 
-       'distance' => number_format($distance, 1) . ' km',
+       'distance' => number_format((float) $distance, 1) . ' km',
 
         'status' => $order->status,
 

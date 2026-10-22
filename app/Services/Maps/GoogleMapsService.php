@@ -87,7 +87,7 @@ class GoogleMapsService
         try {
             $response = Http::acceptJson()
                 ->asJson()
-                ->timeout((int) config('services.google_maps.timeout', 5))
+                ->timeout((int) config('services.google_maps.timeout', 3))
                 ->withHeaders([
                     'X-Goog-Api-Key' => config('services.google_maps.api_key'),
                     'X-Goog-FieldMask' => 'routes.distanceMeters,routes.duration',

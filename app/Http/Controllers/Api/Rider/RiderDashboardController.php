@@ -9,6 +9,7 @@ use App\Models\RiderKyc;
 use App\Models\RiderEarning;
 use App\Models\RiderWalletTransaction;
 use App\Services\Rider\RiderShiftService;
+use App\Services\Maps\GoogleMapsService;
 use App\Models\RiderWeeklySettlement;
 use Carbon\Carbon;
 
@@ -16,9 +17,12 @@ class RiderDashboardController extends Controller
 {
     protected $shiftService;
 
-public function __construct(RiderShiftService $shiftService)
+    protected GoogleMapsService $mapsService;
+
+public function __construct(RiderShiftService $shiftService, GoogleMapsService $mapsService)
 {
     $this->shiftService = $shiftService;
+    $this->mapsService = $mapsService;
 }
 
     public function home(Request $request)
@@ -377,21 +381,29 @@ if ($hasActiveOrder) {
         ->having('pickup_distance_km', '<=', $radius)
         ->orderBy('pickup_distance_km')
         ->get();
-$formattedOrders = $orders->map(function ($order) use ($latitude, $longitude) {
+$formattedOrders = $orders->map(function ($order) {
 
-    // Calculate drop distance (Rider -> Customer)
-    $dropDistanceKm = 6371 * acos(
-        cos(deg2rad($latitude))
-        * cos(deg2rad($order->delivery_latitude))
-        * cos(deg2rad($order->delivery_longitude) - deg2rad($longitude))
-        + sin(deg2rad($latitude))
-        * sin(deg2rad($order->delivery_latitude))
-    );
+    // Drop distance (Restaurant -> Customer) by road via Google; falls back to straight line.
+    $dropDistanceKm = 0;
+    $dropMinutes = 0;
 
-    // Simple estimated time (3 minutes per km)
-    $estimatedTime = ceil(
-        ($order->pickup_distance_km + $dropDistanceKm) * 3
-    );
+    if (
+        $order->pickup_latitude !== null && $order->pickup_longitude !== null &&
+        $order->delivery_latitude !== null && $order->delivery_longitude !== null
+    ) {
+        $drop = $this->mapsService->routeDistance(
+            (float) $order->pickup_latitude,
+            (float) $order->pickup_longitude,
+            (float) $order->delivery_latitude,
+            (float) $order->delivery_longitude
+        );
+
+        $dropDistanceKm = $drop['distance_km'];
+        $dropMinutes = $drop['duration_min'];
+    }
+
+    // Pickup stays straight line (rider keeps moving); 3 minutes per km.
+    $estimatedTime = (int) ceil($order->pickup_distance_km * 3) + $dropMinutes;
 
     return [
         'id' => $order->id,
