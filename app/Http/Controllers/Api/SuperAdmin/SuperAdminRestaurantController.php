@@ -13,6 +13,7 @@ use App\Models\RestaurantOrder;
 use App\Models\RestaurantOutletType;
 use App\Models\RestaurantWorkingDay;
 use App\Models\RestaurantWorkingHour;
+use App\Services\Maps\GoogleMapsService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -143,12 +144,23 @@ class SuperAdminRestaurantController extends Controller
 
         $document = $restaurant->document;
 
+        $address = RestaurantAddress::where('restaurant_id', $restaurant->id)->first();
+
         return response()->json([
             'message' => 'Restaurant details fetched successfully.',
             'data' => [
                 ...$this->listRow($restaurant, $this->locationLookups()),
                 'whatsapp_number' => $restaurant->whatsapp_number,
                 'full_address' => $this->fullAddress($restaurant),
+                // Raw address fields for the map pin editor
+                'location' => [
+                    'has_address' => $address !== null,
+                    'latitude' => $address?->latitude !== null ? (float) $address->latitude : null,
+                    'longitude' => $address?->longitude !== null ? (float) $address->longitude : null,
+                    'full_address' => $address?->full_address,
+                    'landmark' => $address?->landmark,
+                    'pincode' => $address?->pincode,
+                ],
                 'operating_hours' => $this->operatingHours($restaurant),
                 'menu_items_count' => $menuItemsCount,
                 'is_online' => (bool) $restaurant->is_online,
@@ -402,6 +414,99 @@ class SuperAdminRestaurantController extends Controller
         return response()->json([
             'message' => 'Restaurant updated successfully.',
             'data' => $this->freshRow($restaurant->id),
+        ]);
+    }
+
+    /**
+     * Correct the restaurant's map pin and address. Distance, ETA and the
+     * delivery radius check for new orders all use this pin.
+     */
+    public function updateLocation(Request $request, $id)
+    {
+        $restaurant = Restaurant::find($id);
+
+        if (!$restaurant) {
+            return response()->json([
+                'message' => 'Restaurant not found.',
+            ], 404);
+        }
+
+        // Plot, building and pincode come from onboarding, so the row must exist first
+        $address = RestaurantAddress::where('restaurant_id', $restaurant->id)->first();
+
+        if (!$address) {
+            return response()->json([
+                'message' => 'This restaurant has no address on file yet. It must be added from the restaurant app first.',
+            ], 422);
+        }
+
+        // India bounds also catch latitude/longitude entered the wrong way round
+        $validated = $request->validate([
+            'latitude' => ['required', 'numeric', 'between:6,37'],
+            'longitude' => ['required', 'numeric', 'between:68,98'],
+            'full_address' => ['required', 'string', 'max:255'],
+            'landmark' => ['nullable', 'string', 'max:255'],
+            'pincode' => ['required', 'digits:6'],
+        ], [
+            'latitude.between' => 'The pin must be inside India.',
+            'longitude.between' => 'The pin must be inside India.',
+        ]);
+
+        $values = [
+            'latitude' => round((float) $validated['latitude'], 7),
+            'longitude' => round((float) $validated['longitude'], 7),
+            'full_address' => trim($validated['full_address']),
+            'landmark' => filled($validated['landmark'] ?? null) ? trim($validated['landmark']) : null,
+            'pincode' => $validated['pincode'],
+        ];
+
+        $pin = fn ($lat, $lng) => $lat !== null && $lng !== null
+            ? number_format((float) $lat, 5) . ', ' . number_format((float) $lng, 5)
+            : '—';
+
+        $changes = [];
+
+        $oldPin = $pin($address->latitude, $address->longitude);
+        $newPin = $pin($values['latitude'], $values['longitude']);
+
+        if ($oldPin !== $newPin) {
+            $changes[] = "Pin: {$oldPin} → {$newPin}";
+        }
+
+        foreach (['full_address' => 'Address', 'landmark' => 'Landmark', 'pincode' => 'Pincode'] as $column => $label) {
+            if ((string) $address->{$column} !== (string) $values[$column]) {
+                $changes[] = $label . ': ' . ($address->{$column} ?: '—') . ' → ' . ($values[$column] ?: '—');
+            }
+        }
+
+        $address->update($values);
+
+        if ($changes) {
+            $this->log($request, $restaurant, 'Location Updated', implode('; ', $changes));
+        }
+
+        return response()->json([
+            'message' => $changes ? 'Restaurant location updated successfully.' : 'No changes to save.',
+            'data' => $this->freshRow($restaurant->id),
+        ]);
+    }
+
+    /**
+     * Suggested address for a map pin, filled into the location editor.
+     * Uses the server key so it never reaches the browser.
+     */
+    public function reverseGeocode(Request $request, GoogleMapsService $maps)
+    {
+        $validated = $request->validate([
+            'lat' => ['required', 'numeric', 'between:-90,90'],
+            'lng' => ['required', 'numeric', 'between:-180,180'],
+        ]);
+
+        $address = $maps->reverseGeocode((float) $validated['lat'], (float) $validated['lng']);
+
+        return response()->json([
+            'message' => $address ? 'Address found.' : 'Address lookup is unavailable. Please type the address.',
+            'data' => $address,
         ]);
     }
 

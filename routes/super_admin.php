@@ -113,6 +113,8 @@ Route::prefix('super-admin')->group(function () {
             Route::get('/restaurants/export', [SuperAdminRestaurantController::class, 'export'])->middleware('super_admin.can:restaurants,Export');
             Route::get('/restaurants/{id}', [SuperAdminRestaurantController::class, 'show'])->whereNumber('id');
             Route::put('/restaurants/{id}', [SuperAdminRestaurantController::class, 'update'])->whereNumber('id');
+            Route::put('/restaurants/{id}/location', [SuperAdminRestaurantController::class, 'updateLocation'])->whereNumber('id');
+            Route::get('/restaurants/reverse-geocode', [SuperAdminRestaurantController::class, 'reverseGeocode']);
             Route::patch('/restaurants/{id}/status', [SuperAdminRestaurantController::class, 'updateStatus'])->whereNumber('id')->middleware('super_admin.can:restaurants,Suspend');
             Route::get('/restaurants/{id}/menu', [SuperAdminRestaurantController::class, 'menu'])->whereNumber('id');
             Route::patch('/restaurants/{id}/menu/{itemId}/availability', [SuperAdminRestaurantController::class, 'toggleMenuItem'])->whereNumber(['id', 'itemId']);
